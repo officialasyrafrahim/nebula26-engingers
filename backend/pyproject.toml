@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rmis-backend"
-version = "0.1.0"
-description = "Rail Maintenance Intelligence System backend"
+name = "rao-backend"
+version = "2.0.0"
+description = "Rail Access Optimisation backend"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
@@ -14,12 +14,13 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings",
     "httpx",
+    "python-multipart",
+    "redis",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 solver = ["ortools"]
-events = ["redis"]
 postgres = ["psycopg[binary]"]
 
 [tool.setuptools.packages.find]

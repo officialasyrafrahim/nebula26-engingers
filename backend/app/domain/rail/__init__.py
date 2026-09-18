@@ -1,0 +1,74 @@
+"""Canonical rail-access domain layer (natural string keys, immutable records)."""
+
+from app.domain.rail.compiled import CompiledActivity, CompiledInstance
+from app.domain.rail.errors import (
+    InstanceParseError,
+    InstanceValidationError,
+    Issue,
+    RailDataError,
+)
+from app.domain.rail.instance_model import (
+    Activity,
+    Contract,
+    Parameters,
+    PlanningInstance,
+    build_successor_index,
+    find_predecessor_cycles,
+    ordered_activities,
+    planned_start_week,
+    validate_planning_instance,
+)
+from app.domain.rail.keys import (
+    Bound,
+    LocationKey,
+    LocationKind,
+    NaturalKeyError,
+    SectorKey,
+    flip_bound,
+    format_location_id,
+    format_sector_id,
+    parse_location_id,
+    parse_sector_id,
+    replace_location_bound,
+)
+from app.domain.rail.network import BufferRule, Line, LocationSupply, Sector, Station, StationKey
+from app.domain.rail.routes import Route, RouteError, RouteNetwork, expand_route
+
+__all__ = [
+    "Activity",
+    "Bound",
+    "BufferRule",
+    "CompiledActivity",
+    "CompiledInstance",
+    "Contract",
+    "InstanceParseError",
+    "InstanceValidationError",
+    "Issue",
+    "Line",
+    "LocationKey",
+    "LocationKind",
+    "LocationSupply",
+    "NaturalKeyError",
+    "Parameters",
+    "PlanningInstance",
+    "RailDataError",
+    "Route",
+    "RouteError",
+    "RouteNetwork",
+    "Sector",
+    "SectorKey",
+    "Station",
+    "StationKey",
+    "build_successor_index",
+    "expand_route",
+    "find_predecessor_cycles",
+    "flip_bound",
+    "format_location_id",
+    "format_sector_id",
+    "ordered_activities",
+    "parse_location_id",
+    "parse_sector_id",
+    "planned_start_week",
+    "replace_location_bound",
+    "validate_planning_instance",
+]

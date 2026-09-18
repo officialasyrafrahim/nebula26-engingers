@@ -1,23 +1,449 @@
-import { useEffect, useState } from "react";
-import { healthCheck } from "./api/client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  cancelJob,
+  createJob,
+  createRun,
+  getNetwork,
+  getReport,
+  getSchedule,
+  healthCheck,
+  listRuns,
+} from "./api/client";
+import {
+  isActiveJob,
+  type NetworkResponse,
+  type PlanningRun,
+  type Scenario,
+  type ScenarioJob,
+  type ScheduleResponse,
+  type ValidatorReportRead,
+} from "./api/types";
+import JobMonitor from "./components/JobMonitor";
+import NetworkSummary from "./components/NetworkSummary";
+import Panel from "./components/Panel";
+import ResultDashboard from "./components/ResultDashboard";
+import RunLibrary from "./components/RunLibrary";
+import RunSummary from "./components/RunSummary";
+import ScenarioLauncher from "./components/ScenarioLauncher";
+import SignalLamp, { type LampTone } from "./components/SignalLamp";
+import UploadPanel from "./components/UploadPanel";
+import { useJobPolling } from "./hooks/useJobPolling";
+
+type HealthState = "checking" | "ok" | "unavailable";
+
+function errorMessage(caught: unknown): string {
+  return caught instanceof Error ? caught.message : String(caught);
+}
+
+function jobTone(state: string): LampTone {
+  switch (state) {
+    case "COMPLETED":
+      return "ok";
+    case "QUEUED":
+      return "warn";
+    case "RUNNING":
+    case "VALIDATING":
+      return "info";
+    case "FAILED":
+    case "INFEASIBLE":
+    case "TIMED_OUT":
+    case "CANCELLED":
+      return "danger";
+    default:
+      return "idle";
+  }
+}
 
 export default function App() {
-  const [status, setStatus] = useState("checking backend...");
+  const [health, setHealth] = useState<HealthState>("checking");
+  const [healthError, setHealthError] = useState<string | null>(null);
 
-  useEffect(() => {
-    healthCheck()
-      .then((health) => setStatus(`backend ok: ${JSON.stringify(health)}`))
-      .catch((error: Error) => setStatus(`backend unavailable: ${error.message}`));
+  const [runs, setRuns] = useState<PlanningRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(true);
+  const [runsError, setRunsError] = useState<string | null>(null);
+
+  const [selectedRun, setSelectedRun] = useState<PlanningRun | null>(null);
+  const [network, setNetwork] = useState<NetworkResponse | null>(null);
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [networkError, setNetworkError] = useState<string | null>(null);
+
+  const [jobsByRun, setJobsByRun] = useState<Record<string, ScenarioJob[]>>({});
+  const [trackedJobId, setTrackedJobId] = useState<string | null>(null);
+  const [launching, setLaunching] = useState<Scenario | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
+  const [scheduleData, setScheduleData] = useState<ScheduleResponse | null>(null);
+  const [reportData, setReportData] = useState<ValidatorReportRead | null>(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultError, setResultError] = useState<string | null>(null);
+  const [loadedJobId, setLoadedJobId] = useState<string | null>(null);
+
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const jobsRef = useRef(jobsByRun);
+  jobsRef.current = jobsByRun;
+
+  const selectedRunId = selectedRun?.id ?? null;
+
+  const { job: polledJob, error: pollError } = useJobPolling(
+    selectedRunId,
+    trackedJobId,
+  );
+
+  const jobs = useMemo(
+    () => (selectedRunId ? (jobsByRun[selectedRunId] ?? []) : []),
+    [jobsByRun, selectedRunId],
+  );
+
+  const refreshHealth = useCallback(async () => {
+    setHealth("checking");
+    try {
+      await healthCheck();
+      setHealth("ok");
+      setHealthError(null);
+    } catch (caught) {
+      setHealth("unavailable");
+      setHealthError(errorMessage(caught));
+    }
   }, []);
 
+  const refreshRuns = useCallback(async () => {
+    setRunsLoading(true);
+    setRunsError(null);
+    try {
+      setRuns(await listRuns());
+    } catch (caught) {
+      setRunsError(errorMessage(caught));
+    } finally {
+      setRunsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshHealth();
+    void refreshRuns();
+  }, [refreshHealth, refreshRuns]);
+
+  const loadResults = useCallback(async (runId: string, jobId: string) => {
+    setResultsLoading(true);
+    setResultError(null);
+    try {
+      const [schedule, report] = await Promise.all([
+        getSchedule(runId, jobId),
+        getReport(runId, jobId),
+      ]);
+      setScheduleData(schedule);
+      setReportData(report);
+      setLoadedJobId(jobId);
+    } catch (caught) {
+      setScheduleData(null);
+      setReportData(null);
+      setLoadedJobId(null);
+      setResultError(errorMessage(caught));
+    } finally {
+      setResultsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRun) {
+      setNetwork(null);
+      setNetworkError(null);
+      return;
+    }
+    let cancelled = false;
+    setNetworkLoading(true);
+    setNetworkError(null);
+    setNetwork(null);
+    getNetwork(selectedRun.id)
+      .then((data) => {
+        if (!cancelled) setNetwork(data);
+      })
+      .catch((caught) => {
+        if (!cancelled) setNetworkError(errorMessage(caught));
+      })
+      .finally(() => {
+        if (!cancelled) setNetworkLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRun]);
+
+  useEffect(() => {
+    setScheduleData(null);
+    setReportData(null);
+    setLoadedJobId(null);
+    setResultError(null);
+    setTrackedJobId(null);
+    if (!selectedRunId) return;
+    const active = (jobsRef.current[selectedRunId] ?? []).find((job) =>
+      isActiveJob(job.state),
+    );
+    if (active) setTrackedJobId(active.id);
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!polledJob) return;
+    setJobsByRun((current) => {
+      const list = current[polledJob.run_id] ?? [];
+      const exists = list.some((job) => job.id === polledJob.id);
+      const next = exists
+        ? list.map((job) => (job.id === polledJob.id ? polledJob : job))
+        : [polledJob, ...list];
+      return { ...current, [polledJob.run_id]: next };
+    });
+    if (polledJob.state === "COMPLETED" && loadedJobId !== polledJob.id) {
+      void loadResults(polledJob.run_id, polledJob.id);
+    }
+  }, [polledJob, loadedJobId, loadResults]);
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      const run = await createRun(files);
+      setRuns((current) => [run, ...current]);
+      setJobsByRun((current) => ({ ...current, [run.id]: [] }));
+      setSelectedRun(run);
+      setActionError(null);
+    },
+    [],
+  );
+
+  const handleLaunch = useCallback(
+    async (scenario: Scenario, timeLimitSeconds?: number) => {
+      if (!selectedRun) {
+        throw new Error("Select a planning run before dispatching a scenario.");
+      }
+      setLaunching(scenario);
+      setActionError(null);
+      try {
+        const payload =
+          timeLimitSeconds == null
+            ? { scenario }
+            : { scenario, time_limit_seconds: timeLimitSeconds };
+        const job = await createJob(selectedRun.id, payload);
+        setJobsByRun((current) => ({
+          ...current,
+          [selectedRun.id]: [job, ...(current[selectedRun.id] ?? [])],
+        }));
+        setScheduleData(null);
+        setReportData(null);
+        setLoadedJobId(null);
+        setResultError(null);
+        setTrackedJobId(job.id);
+      } finally {
+        setLaunching(null);
+      }
+    },
+    [selectedRun],
+  );
+
+  const handleCancel = useCallback(async (job: ScenarioJob) => {
+    setCancelling(true);
+    setActionError(null);
+    try {
+      const updated = await cancelJob(job.run_id, job.id);
+      setJobsByRun((current) => {
+        const list = current[updated.run_id] ?? [];
+        return {
+          ...current,
+          [updated.run_id]: list.map((entry) =>
+            entry.id === updated.id ? updated : entry,
+          ),
+        };
+      });
+    } catch (caught) {
+      setActionError(errorMessage(caught));
+    } finally {
+      setCancelling(false);
+    }
+  }, []);
+
+  const handleInspectJob = useCallback(
+    (job: ScenarioJob) => {
+      setTrackedJobId(job.id);
+      if (job.state === "COMPLETED") {
+        void loadResults(job.run_id, job.id);
+      } else if (isActiveJob(job.state)) {
+        setScheduleData(null);
+        setReportData(null);
+        setLoadedJobId(null);
+        setResultError(null);
+      }
+    },
+    [loadResults],
+  );
+
+  const resultReady =
+    scheduleData != null &&
+    reportData != null &&
+    selectedRun != null &&
+    network != null;
+
   return (
-    <main>
-      <h1>Rail Maintenance Intelligence — Planner UI (skeleton)</h1>
-      <p>
-        This placeholder consumes the RMIS API under <code>/api/v1</code>. Views for
-        assets, work packages, planning jobs and proposals are not wired yet.
-      </p>
-      <p>{status}</p>
-    </main>
+    <div className="app">
+      <header className="masthead">
+        <div className="masthead__brand">
+          <span className="masthead__mark" aria-hidden="true">
+            RAO
+          </span>
+          <div>
+            <h1>Rail Access Optimisation</h1>
+            <p>Judge workflow control board · Scenario A/B/C</p>
+          </div>
+        </div>
+        <div className="masthead__status" role="status" aria-live="polite">
+          <span className="masthead__stat">
+            <SignalLamp
+              tone={
+                health === "ok" ? "ok" : health === "checking" ? "warn" : "danger"
+              }
+              size="sm"
+              pulse={health === "checking"}
+              label={`Backend ${health}`}
+            />
+            <span>
+              backend {health}
+              {healthError ? `: ${healthError}` : ""}
+            </span>
+          </span>
+          <span className="masthead__stat">
+            <SignalLamp tone="idle" size="sm" label="Runs loaded" />
+            <span>{runs.length} runs loaded</span>
+          </span>
+          {selectedRun ? (
+            <span className="masthead__stat">
+              <SignalLamp
+                tone={polledJob ? jobTone(polledJob.state) : "idle"}
+                size="sm"
+                pulse={polledJob ? isActiveJob(polledJob.state) : false}
+                label={polledJob ? `Job ${polledJob.state}` : "No tracked job"}
+              />
+              <span>
+                run {selectedRun.id.slice(0, 8)}
+                {polledJob ? ` · ${polledJob.scenario} ${polledJob.state}` : ""}
+              </span>
+            </span>
+          ) : null}
+        </div>
+      </header>
+
+      {actionError ? (
+        <div className="notice notice--danger notice--global" role="alert">
+          <span className="notice__title">Action failed</span>
+          <p>{actionError}</p>
+          <button
+            type="button"
+            className="btn btn--tiny"
+            onClick={() => setActionError(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      <main className="board">
+        <div className="board__column">
+          <UploadPanel onUpload={handleUpload} />
+          <RunLibrary
+            runs={runs}
+            selectedRunId={selectedRunId}
+            loading={runsLoading}
+            error={runsError}
+            onSelect={setSelectedRun}
+            onRefresh={() => void refreshRuns()}
+          />
+        </div>
+
+        <div className="board__column">
+          {!selectedRun ? (
+            <Panel title="Control desk idle" eyebrow="Awaiting a planning run">
+              <p className="empty">
+                Compile an eight-CSV instance or select a recent run to arm the
+                scenario dispatch console. The board shows parse health, network
+                topology, scenario jobs and the validated result dashboard.
+              </p>
+            </Panel>
+          ) : (
+            <>
+              <RunSummary run={selectedRun} />
+
+              {network ? (
+                <NetworkSummary network={network} />
+              ) : (
+                <Panel title="Network summary" eyebrow="Parsed topology · /network">
+                  {networkError ? (
+                    <div className="notice notice--danger" role="alert">
+                      <span className="notice__title">Could not load network</span>
+                      <p>{networkError}</p>
+                    </div>
+                  ) : (
+                    <p className="empty" role="status" aria-live="polite">
+                      {networkLoading ? "Loading network topology…" : "No network loaded."}
+                    </p>
+                  )}
+                </Panel>
+              )}
+
+              <ScenarioLauncher
+                disabled={!network}
+                launching={launching}
+                jobs={jobs}
+                selectedJobId={trackedJobId}
+                onLaunch={handleLaunch}
+                onInspectJob={handleInspectJob}
+              />
+
+              <JobMonitor
+                job={polledJob}
+                pollError={pollError}
+                cancelling={cancelling}
+                onCancel={handleCancel}
+              />
+
+              {resultsLoading ? (
+                <Panel title="Result dashboard" eyebrow="Loading validated schedule">
+                  <p className="empty" role="status" aria-live="polite">
+                    Fetching schedule and validator report…
+                  </p>
+                </Panel>
+              ) : null}
+
+              {resultError && !resultsLoading ? (
+                <Panel title="Result dashboard" eyebrow="Unavailable" tone="danger">
+                  <div className="notice notice--danger" role="alert">
+                    <span className="notice__title">Results unavailable</span>
+                    <p>{resultError}</p>
+                  </div>
+                </Panel>
+              ) : null}
+
+              {resultReady && scheduleData && reportData && selectedRun && network ? (
+                <ResultDashboard
+                  runId={selectedRun.id}
+                  jobId={scheduleData.job_id}
+                  scenario={scheduleData.scenario}
+                  schedule={scheduleData}
+                  report={reportData.report}
+                  network={network}
+                />
+              ) : null}
+            </>
+          )}
+        </div>
+      </main>
+
+      <footer className="footer">
+        <span>
+          UI displays server-computed schedules and scores only; no scheduling logic
+          runs in the browser.
+        </span>
+        <span>
+          Scenarios A/B/C are distinct answer keys. Downloads are gated by the
+          validator.
+        </span>
+      </footer>
+    </div>
   );
 }
