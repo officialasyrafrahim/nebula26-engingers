@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from app.domain.rail.compiled import CompiledActivity, CompiledInstance
+from collections.abc import Mapping
+
+from app.domain.rail.compiled import (
+    AccessNightDomain,
+    CompiledActivity,
+    CompiledInstance,
+    PhysicalPossessionContract,
+)
 from app.domain.rail.instance_model import Activity, PlanningInstance, ordered_activities
 from app.domain.rail.routes import Route, expand_route
 from app.modules.compiler.closures import (
     LIVE_NATURE,
     buffered_closure,
+    build_closure_conflicts,
     interchange_locations,
     interchange_triggered,
     mirrored_locations,
@@ -62,6 +70,45 @@ def compile_activity(
     )
 
 
+def build_access_night_domains(
+    instance: PlanningInstance,
+) -> dict[tuple[str, str, int], AccessNightDomain]:
+    """Enumerate the local ``access_night`` domain for every contract-week.
+
+    The key is ``(contract_number, activity_type, week)`` and the value repeats
+    ``1..weekly_cap``. This makes the locality explicit: the same numeric night
+    in two contracts is two unrelated slots, so consumers never join on it.
+    """
+
+    domains: dict[tuple[str, str, int], AccessNightDomain] = {}
+    for contract_number, contract in sorted(instance.contracts.items()):
+        for week in range(1, instance.horizon_weeks + 1):
+            domains[(contract_number, contract.activity_type, week)] = AccessNightDomain(
+                contract_number=contract_number,
+                activity_type=contract.activity_type,
+                week=week,
+                weekly_cap=contract.number_of_maximum_access_per_week,
+            )
+    return domains
+
+
+def build_location_occupants(
+    activities: Mapping[str, CompiledActivity],
+) -> dict[str, tuple[str, ...]]:
+    """Index route occupants by location in deterministic activity-id order.
+
+    Only occupied route locations count. Buffer, mirror and interchange closure
+    locations are intentionally excluded because they never consume capacity.
+    """
+
+    occupants: dict[str, list[str]] = {}
+    for activity_id in sorted(activities):
+        activity = activities[activity_id]
+        for location_id in dict.fromkeys(activity.occupied_locations):
+            occupants.setdefault(location_id, []).append(activity_id)
+    return {location_id: tuple(ids) for location_id, ids in sorted(occupants.items())}
+
+
 def compile_instance(instance: PlanningInstance) -> CompiledInstance:
     """Compile every activity and attach capacities and compatibility metadata."""
 
@@ -76,10 +123,19 @@ def compile_instance(instance: PlanningInstance) -> CompiledInstance:
         )
         compiled[activity.activity_id] = compile_activity(instance, activity, route)
 
+    co_share_allowed = build_co_share_allowed()
+    physical_possession = PhysicalPossessionContract(
+        access_night_domains=build_access_night_domains(instance),
+        closure_conflicts=build_closure_conflicts(compiled),
+        location_occupants=build_location_occupants(compiled),
+        co_share_allowed=co_share_allowed,
+    )
+
     return CompiledInstance(
         instance=instance,
         activities=compiled,
-        co_share_allowed=build_co_share_allowed(),
+        co_share_allowed=co_share_allowed,
+        physical_possession=physical_possession,
         location_capacities={
             location_id: location.supply_capacity
             for location_id, location in instance.locations.items()

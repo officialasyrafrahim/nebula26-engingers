@@ -15,6 +15,8 @@ from typing import Any
 from app.domain.rail.compiled import CompiledInstance
 from app.modules.compiler.policy import ScenarioPolicy
 
+PHYSICAL_NIGHTS_PER_WEEK = 7
+
 
 @dataclass(slots=True)
 class SolverVariables:
@@ -22,6 +24,7 @@ class SolverVariables:
 
     total_weeks: int
     weeks: tuple[int, ...]
+    physical_nights: tuple[int, ...]
     activity_order: tuple[str, ...]
     activity_weeks: dict[str, tuple[int, ...]]
     activity_nights: dict[str, tuple[int, ...]]
@@ -33,11 +36,11 @@ class SolverVariables:
     first_week: dict[str, Any]
     last_week: dict[str, Any]
     used_night: dict[tuple[str, int, int], Any]
-    used_location_night: dict[tuple[str, int, int], Any]
+    location_slot_used: dict[tuple[str, int, int], Any]
     position: dict[tuple[str, int], Any]
     excess: dict[tuple[str, int], Any]
     completion_week: dict[str, Any]
-    overrun: dict[str, Any]
+    activity_overrun: dict[str, Any]
     overshoot: Any
     eclo_window: dict[tuple[str, int], Any]
 
@@ -64,6 +67,26 @@ def max_nights(compiled: CompiledInstance) -> int:
         for activity in compiled.activities.values()
     ]
     return max(caps, default=1)
+
+
+def physical_night_count(compiled: CompiledInstance) -> int:
+    """Number of distinct physical nights the model may assign in a week.
+
+    A week has seven calendar nights. The domain is widened when a published
+    contract cap or location supply exceeds seven, so the local ``access_night``
+    range (``1..cap``) is always representable after ranking.
+    """
+
+    total = PHYSICAL_NIGHTS_PER_WEEK
+    for cap in compiled.contract_weekly_caps.values():
+        total = max(total, cap)
+    for capacity in compiled.location_capacities.values():
+        total = max(total, capacity)
+    return max(1, total)
+
+
+def physical_nights(compiled: CompiledInstance) -> tuple[int, ...]:
+    return tuple(range(1, physical_night_count(compiled) + 1))
 
 
 def occupied_location_ids(compiled: CompiledInstance) -> tuple[str, ...]:
@@ -95,6 +118,7 @@ def build_variables(
 
     instance = compiled.instance
     weeks = tuple(range(1, total_weeks + 1))
+    nights = physical_nights(compiled)
     activity_order = ordered_activity_ids(compiled)
     eclo_values = (0, 1) if policy.eclo_allowed else (0,)
 
@@ -109,10 +133,9 @@ def build_variables(
 
     for activity_id in activity_order:
         activity = compiled.activities[activity_id]
-        cap = compiled.contract_weekly_caps[activity.contract_number]
         start = max(1, activity.planned_start_week)
         weeks_a = tuple(week for week in range(start, total_weeks + 1))
-        nights_a = tuple(range(1, cap + 1))
+        nights_a = nights
         activity_weeks[activity_id] = weeks_a
         activity_nights[activity_id] = nights_a
         for week in weeks_a:
@@ -138,43 +161,54 @@ def build_variables(
 
     used_night: dict[tuple[str, int, int], Any] = {}
     for contract_number in sorted(compiled.contract_weekly_caps):
-        cap = compiled.contract_weekly_caps[contract_number]
         for week in weeks:
-            for night in range(1, cap + 1):
+            for night in nights:
                 used_night[(contract_number, week, night)] = model.NewBoolVar(
                     f"night_used_{contract_number}_w{week}_n{night}"
                 )
 
+    # Capacity is counted in physical possession slots. One physical night at a
+    # location-week is one possession, so the slot count is bounded by both the
+    # number of route occupants and the number of physical nights.
     locations = occupied_location_ids(compiled)
-    nights_global = max_nights(compiled)
-    used_location_night: dict[tuple[str, int, int], Any] = {}
+    location_activity_count: dict[str, int] = {}
+    for activity in compiled.activities.values():
+        for location_id in activity.occupied_locations:
+            location_activity_count[location_id] = (
+                location_activity_count.get(location_id, 0) + 1
+            )
+    location_slot_used: dict[tuple[str, int, int], Any] = {}
     position: dict[tuple[str, int], Any] = {}
     excess: dict[tuple[str, int], Any] = {}
     for location_id in locations:
+        bound = max(1, min(location_activity_count.get(location_id, 1), len(nights)))
         for week in weeks:
             position[(location_id, week)] = model.NewIntVar(
-                0, nights_global, f"position_{location_id}_w{week}"
+                0, bound, f"position_{location_id}_w{week}"
             )
             if policy.excess_access_nights_scored:
                 excess[(location_id, week)] = model.NewIntVar(
-                    0, nights_global, f"excess_{location_id}_w{week}"
+                    0, bound, f"excess_{location_id}_w{week}"
                 )
-            for night in range(1, nights_global + 1):
-                used_location_night[(location_id, week, night)] = model.NewBoolVar(
-                    f"loc_night_{location_id}_w{week}_n{night}"
+            for night in nights:
+                location_slot_used[(location_id, week, night)] = model.NewBoolVar(
+                    f"slot_used_{location_id}_w{week}_n{night}"
                 )
 
     bounds = _overrun_upper_bound(compiled, total_weeks)
     completion_week: dict[str, Any] = {}
-    overrun: dict[str, Any] = {}
     for contract_number in sorted(instance.contracts):
         if not compiled.activities_for_contract(contract_number):
             continue
         completion_week[contract_number] = model.NewIntVar(
             1, total_weeks, f"completion_{contract_number}"
         )
-        overrun[contract_number] = model.NewIntVar(
-            0, bounds[contract_number], f"overrun_{contract_number}"
+
+    activity_overrun: dict[str, Any] = {}
+    for activity_id in activity_order:
+        contract_number = compiled.activities[activity_id].contract_number
+        activity_overrun[activity_id] = model.NewIntVar(
+            0, bounds[contract_number], f"activity_overrun_{activity_id}"
         )
 
     max_half_units = sum(
@@ -193,6 +227,7 @@ def build_variables(
     return SolverVariables(
         total_weeks=total_weeks,
         weeks=weeks,
+        physical_nights=nights,
         activity_order=activity_order,
         activity_weeks=activity_weeks,
         activity_nights=activity_nights,
@@ -204,20 +239,23 @@ def build_variables(
         first_week=first_week,
         last_week=last_week,
         used_night=used_night,
-        used_location_night=used_location_night,
+        location_slot_used=location_slot_used,
         position=position,
         excess=excess,
         completion_week=completion_week,
-        overrun=overrun,
+        activity_overrun=activity_overrun,
         overshoot=overshoot,
         eclo_window=eclo_window,
     )
 
 
 __all__ = [
+    "PHYSICAL_NIGHTS_PER_WEEK",
     "SolverVariables",
     "build_variables",
     "max_nights",
     "occupied_location_ids",
     "ordered_activity_ids",
+    "physical_night_count",
+    "physical_nights",
 ]

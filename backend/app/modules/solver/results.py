@@ -15,7 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AccessPlacement(BaseModel):
-    """One access occurrence for one activity."""
+    """One access occurrence for one activity.
+
+    ``access_night`` stays the contract/type-local index published in
+    ``SCHEDULE_ACCESS.csv``. ``physical_night`` is the global physical slot the
+    solver assigned within the week (1..7). It is a solver fact for explanations
+    and tests and is not part of the published CSV schema.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -24,6 +30,7 @@ class AccessPlacement(BaseModel):
     week: int = Field(ge=1)
     eclo: bool
     access_night: int = Field(ge=1)
+    physical_night: int | None = Field(default=None, ge=1)
 
 
 class OccupancyPlacement(BaseModel):

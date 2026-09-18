@@ -157,6 +157,7 @@ def build_fake_solver_result(
     *,
     status: str = "OPTIMAL",
     feasible: bool = True,
+    binding_reasons: dict[str, list[str]] | None = None,
     **kwargs,
 ):
     """Build a deterministic fake solver result for lifecycle tests."""
@@ -232,7 +233,7 @@ def build_fake_solver_result(
             item.contract_number: item.simulated_completion_date for item in results
         },
         objective_breakdown={"scenario": scenario, "score": 0.0},
-        binding_reasons={},
+        binding_reasons=binding_reasons or {},
     )
 
 

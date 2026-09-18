@@ -6,8 +6,11 @@ never hard-coded per activity (INP-04 / SCH-04 / SCH-05).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pydantic import BaseModel, ConfigDict
 
+from app.domain.rail.compiled import ClosureConflict, CompiledActivity
 from app.domain.rail.instance_model import PlanningInstance
 from app.domain.rail.keys import (
     flip_bound,
@@ -123,6 +126,57 @@ def interchange_triggered(
         ),
     )
     return interchange_sector in closure.location_ids
+
+
+def closure_conflict_rule(
+    left: CompiledActivity,
+    right: CompiledActivity,
+    intersection: frozenset[str],
+) -> str:
+    """Most specific rule tag for a pair whose closures intersect.
+
+    ``interchange`` beats ``mirror`` beats ``closure`` so the validator and the
+    explanation layer can report the strongest reason for a conflict.
+    """
+
+    interchange = set(left.interchange_locations) | set(right.interchange_locations)
+    if intersection & interchange:
+        return "interchange"
+    mirrored = set(left.mirrored_locations) | set(right.mirrored_locations)
+    if intersection & mirrored:
+        return "mirror"
+    return "closure"
+
+
+def build_closure_conflicts(
+    activities: Mapping[str, CompiledActivity],
+) -> dict[tuple[str, str], ClosureConflict]:
+    """Build the closure conflict graph over all activity pairs.
+
+    Each key is a canonical ``(min_id, max_id)`` pair. A pair appears exactly
+    when the two compiled closures share at least one location; the value records
+    every shared location and the most specific rule tag. Co-share compatible
+    pairs stay in the graph because the graph is a pure compiled fact; consumers
+    apply the waiver. The result is empty for activities with no closures, so the
+    graph never invents a contention that the network does not have.
+    """
+
+    conflicts: dict[tuple[str, str], ClosureConflict] = {}
+    activity_ids = sorted(activities)
+    for index, left_id in enumerate(activity_ids):
+        left = activities[left_id]
+        left_closed = frozenset(left.closed_locations)
+        if not left_closed:
+            continue
+        for right_id in activity_ids[index + 1 :]:
+            right = activities[right_id]
+            shared = left_closed & frozenset(right.closed_locations)
+            if shared:
+                conflicts[(left_id, right_id)] = ClosureConflict(
+                    locations=shared,
+                    rule=closure_conflict_rule(left, right, shared),
+                )
+    return conflicts
 
 
 def interchange_locations(

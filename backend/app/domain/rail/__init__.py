@@ -1,6 +1,13 @@
 """Canonical rail-access domain layer (natural string keys, immutable records)."""
 
-from app.domain.rail.compiled import CompiledActivity, CompiledInstance
+from app.domain.rail.compiled import (
+    AccessNightDomain,
+    ClosureConflict,
+    CompiledActivity,
+    CompiledInstance,
+    PhysicalPossessionContract,
+    ordered_pair,
+)
 from app.domain.rail.errors import (
     InstanceParseError,
     InstanceValidationError,
@@ -35,9 +42,11 @@ from app.domain.rail.network import BufferRule, Line, LocationSupply, Sector, St
 from app.domain.rail.routes import Route, RouteError, RouteNetwork, expand_route
 
 __all__ = [
+    "AccessNightDomain",
     "Activity",
     "Bound",
     "BufferRule",
+    "ClosureConflict",
     "CompiledActivity",
     "CompiledInstance",
     "Contract",
@@ -50,6 +59,7 @@ __all__ = [
     "LocationSupply",
     "NaturalKeyError",
     "Parameters",
+    "PhysicalPossessionContract",
     "PlanningInstance",
     "RailDataError",
     "Route",
@@ -66,6 +76,7 @@ __all__ = [
     "format_location_id",
     "format_sector_id",
     "ordered_activities",
+    "ordered_pair",
     "parse_location_id",
     "parse_sector_id",
     "planned_start_week",

@@ -28,25 +28,22 @@ OVERSHOOT_WEIGHT = 1
 class ObjectiveTerms:
     """Scaled coefficients plus the human-readable weights."""
 
-    contract_weights: dict[str, float]
-    scaled_contract_weights: dict[str, int]
+    activity_weights: dict[str, float]
+    scaled_activity_weights: dict[str, int]
     excess_weight: int
     eclo_weight: int
     overshoot_weight: int
 
 
-def contract_weight(compiled: CompiledInstance, contract_number: str) -> float:
-    """Banded overrun weight, using the contract's highest-priority activity."""
+def activity_weight(compiled: CompiledInstance, activity_id: str) -> float:
+    """Banded overrun weight for one activity inside its contract tier."""
 
-    activities = compiled.activities_for_contract(contract_number)
-    if not activities:
-        return 0.0
-    contract = compiled.instance.contracts[contract_number]
-    nudge = min(
-        compiled.instance.activities[activity.activity_id].activity_priority
-        for activity in activities
+    compiled_activity = compiled.activities[activity_id]
+    activity = compiled.instance.activities[activity_id]
+    contract = compiled.instance.contracts[compiled_activity.contract_number]
+    return contract_overrun_weight(
+        contract.contract_priority, activity.activity_priority
     )
-    return contract_overrun_weight(contract.contract_priority, nudge)
 
 
 def build_objective(
@@ -57,17 +54,17 @@ def build_objective(
 ) -> ObjectiveTerms:
     """Add the scaled penalty objective to ``model`` and return its terms."""
 
-    contract_weights: dict[str, float] = {}
-    scaled_contract_weights: dict[str, int] = {}
+    activity_weights: dict[str, float] = {}
+    scaled_activity_weights: dict[str, int] = {}
     terms: list[Any] = []
 
-    for contract_number in sorted(variables.overrun):
-        weight = contract_weight(compiled, contract_number)
+    for activity_id in variables.activity_order:
+        weight = activity_weight(compiled, activity_id)
         scaled = round(weight * OBJECTIVE_SCALE)
-        contract_weights[contract_number] = weight
-        scaled_contract_weights[contract_number] = scaled
+        activity_weights[activity_id] = weight
+        scaled_activity_weights[activity_id] = scaled
         if policy.overrun_scored and scaled:
-            terms.append(scaled * variables.overrun[contract_number])
+            terms.append(scaled * variables.activity_overrun[activity_id])
 
     for variable in variables.excess.values():
         terms.append(EXCESS_ACCESS_NIGHT_COST * OBJECTIVE_SCALE * variable)
@@ -80,8 +77,8 @@ def build_objective(
     model.Minimize(sum(terms))
 
     return ObjectiveTerms(
-        contract_weights=contract_weights,
-        scaled_contract_weights=scaled_contract_weights,
+        activity_weights=activity_weights,
+        scaled_activity_weights=scaled_activity_weights,
         excess_weight=EXCESS_ACCESS_NIGHT_COST,
         eclo_weight=ECLO_NIGHT_COST,
         overshoot_weight=OVERSHOOT_WEIGHT,
@@ -92,6 +89,6 @@ __all__ = [
     "OBJECTIVE_SCALE",
     "OVERSHOOT_WEIGHT",
     "ObjectiveTerms",
+    "activity_weight",
     "build_objective",
-    "contract_weight",
 ]

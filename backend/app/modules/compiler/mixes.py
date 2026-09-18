@@ -69,6 +69,66 @@ def possession_slot_count(access_types: Iterable[str]) -> int:
     return 1 if _counts(access_types) else 0
 
 
+def minimum_possessions(access_types: Mapping[str, int] | Iterable[str]) -> int:
+    """Minimum legal possessions needed to host a whole location-week roster.
+
+    ``PM`` is always alone; each ``PC`` hosts up to three ``C``; remaining ``C``
+    pack four to a possession:
+
+        possessions = pm + max(pc, ceil((pc + c) / 4))
+
+    For a single legal possession this returns 1. Callers use it to compare the
+    capacity a location-week consumes against ``supply_capacity`` without
+    depending on how ``co_share_group`` labels were assigned.
+    """
+
+    counts = _counts(access_types)
+    pm = counts.get("PM", 0)
+    pc = counts.get("PC", 0)
+    coworker = counts.get("C", 0)
+    return pm + max(pc, -(-(pc + coworker) // C_ONLY_LIMIT))
+
+
+def pack_possessions(
+    roster: Iterable[tuple[str, str]],
+) -> tuple[tuple[str, ...], ...]:
+    """Deterministically pack ``(activity_id, access_type)`` into legal possessions.
+
+    Input order is preserved. Every group is a legal possession mix: one ``PM``;
+    one ``PC`` with up to three ``C``; or up to four ``C``. This is the single
+    canonical grouping a solver may emit as ``co_share_group`` labels and a
+    fallback validator may reconstruct to compare possession counts. Unrecognised
+    types each take their own group so no occupant is silently dropped.
+    """
+
+    pms: list[str] = []
+    pcs: list[str] = []
+    coworkers: list[str] = []
+    others: list[str] = []
+    for activity_id, access_type in roster:
+        if access_type == "PM":
+            pms.append(activity_id)
+        elif access_type == "PC":
+            pcs.append(activity_id)
+        elif access_type == "C":
+            coworkers.append(activity_id)
+        else:
+            others.append(activity_id)
+
+    groups: list[tuple[str, ...]] = [(activity_id,) for activity_id in pms]
+    next_coworker = 0
+    for pc in pcs:
+        members = [pc]
+        while len(members) < PC_COWORKER_LIMIT + 1 and next_coworker < len(coworkers):
+            members.append(coworkers[next_coworker])
+            next_coworker += 1
+        groups.append(tuple(members))
+    for start in range(next_coworker, len(coworkers), C_ONLY_LIMIT):
+        groups.append(tuple(coworkers[start : start + C_ONLY_LIMIT]))
+    groups.extend((activity_id,) for activity_id in others)
+    return tuple(groups)
+
+
 def summarise_mix(access_types: Iterable[str]) -> dict[str, int]:
     """Return a deterministic count of each access type for diagnostics."""
 

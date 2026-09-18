@@ -4,6 +4,8 @@ from app.modules.compiler.closures import (
     ClosureError,
     ClosureResult,
     buffered_closure,
+    build_closure_conflicts,
+    closure_conflict_rule,
     interchange_locations,
     interchange_triggered,
     mirrored_locations,
@@ -14,6 +16,8 @@ from app.modules.compiler.mixes import (
     build_co_share_allowed,
     co_share_compatible,
     legal_access_mix,
+    minimum_possessions,
+    pack_possessions,
     possession_slot_count,
     summarise_mix,
 )
@@ -29,7 +33,12 @@ from app.modules.compiler.policy import (
     get_policy,
 )
 from app.modules.compiler.routes import expand_all_routes
-from app.modules.compiler.rule_compiler import compile_activity, compile_instance
+from app.modules.compiler.rule_compiler import (
+    build_access_night_domains,
+    build_location_occupants,
+    compile_activity,
+    compile_instance,
+)
 
 __all__ = [
     "ACCESS_TYPES",
@@ -43,8 +52,12 @@ __all__ = [
     "SCENARIO_POLICIES",
     "ScenarioPolicy",
     "buffered_closure",
+    "build_access_night_domains",
+    "build_closure_conflicts",
     "build_co_share_allowed",
     "build_dependency_maps",
+    "build_location_occupants",
+    "closure_conflict_rule",
     "co_share_compatible",
     "compile_activity",
     "compile_instance",
@@ -54,7 +67,9 @@ __all__ = [
     "interchange_locations",
     "interchange_triggered",
     "legal_access_mix",
+    "minimum_possessions",
     "mirrored_locations",
+    "pack_possessions",
     "possession_slot_count",
     "predecessor_cycle",
     "summarise_mix",

@@ -251,7 +251,14 @@ def test_predecessor_finish_to_start_zero_lag():
     assert max(week for week, _, _ in first) < min(week for week, _, _ in second)
 
 
-def test_incompatible_closure_overlap_never_shares_a_night():
+def test_incompatible_closure_overlap_never_shares_a_physical_night():
+    """Closure overlap is a physical-night fact, not an equal local night number.
+
+    ``access_night`` is contract/type-local, so two conflicting contracts may
+    publish the same local index. The solver must still put them on different
+    global physical nights (or different weeks).
+    """
+
     contracts = [
         {
             "contract_number": "C1",
@@ -285,8 +292,12 @@ def test_incompatible_closure_overlap_never_shares_a_night():
     )
     result = solve(compiled, "A", time_limit_seconds=10)
 
-    nights_a = {(week, night) for week, night, _ in activity_access(result, "A1")}
-    nights_b = {(week, night) for week, night, _ in activity_access(result, "A2")}
+    nights_a = {
+        (row.week, row.physical_night) for row in result.access if row.activity_id == "A1"
+    }
+    nights_b = {
+        (row.week, row.physical_night) for row in result.access if row.activity_id == "A2"
+    }
     assert result.feasible
     assert nights_a.isdisjoint(nights_b)
 
@@ -321,7 +332,9 @@ def test_compatible_activities_co_share_a_single_possession():
     accesses = activity_access(result, "A1")
     assert accesses == activity_access(result, "A2")
     groups = {row.co_share_group for row in result.occupancy}
-    assert groups == {f"b{accesses[0][1]}"}
+    assert groups == {"b1"}
+    assert "CO_SHARE_PACKED" in result.binding_reasons["A1"]
+    assert "CO_SHARE_PACKED" in result.binding_reasons["A2"]
 
 
 def test_pm_and_coworker_cannot_share_a_location_night():
@@ -436,3 +449,174 @@ def test_plan_request_boundary_contract():
     assert result.scenario == "A"
     assert result.contract_completion
     assert all(row.co_share_group.startswith("b") for row in result.occupancy)
+
+
+def test_compatible_activities_on_one_physical_night_share_one_possession():
+    """One C contract, workfront 2: two C accesses share a physical night and group."""
+
+    compiled = make_compiled(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_maximum_access_per_week": 2,
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                **_single_sector(),
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                **_single_sector(),
+                "total_accesses": 1,
+            },
+        ],
+        capacities={"SEC:ALP:S01_S02:EB": 1},
+        horizon_weeks=1,
+    )
+    result = solve(compiled, "A", time_limit_seconds=10, horizon_extension_weeks=0)
+
+    assert result.feasible
+    assert len({row.physical_night for row in result.access}) == 1
+    assert location_positions(result)[("SEC:ALP:S01_S02:EB", 1)] == 1
+    assert {row.co_share_group for row in result.occupancy} == {"b1"}
+
+
+def test_pm_and_coworker_need_two_possessions_or_separate_weeks():
+    """PM plus C cannot share, so capacity 1 forces separate weeks."""
+
+    contracts = [
+        {"contract_number": "C1", "access_type": "PM", "nature_of_activity": "Non-live (Others)"},
+        {"contract_number": "C2", "access_type": "C", "nature_of_activity": "Non-live (Others)"},
+    ]
+    activities = [
+        {
+            "activity_id": "A1",
+            "contract_number": "C1",
+            **_single_sector(),
+            "total_accesses": 1,
+        },
+        {
+            "activity_id": "A2",
+            "contract_number": "C2",
+            **_single_sector(),
+            "total_accesses": 1,
+        },
+    ]
+    capacities = {"SEC:ALP:S01_S02:EB": 1}
+
+    one_week = make_compiled(contracts, activities, capacities=capacities, horizon_weeks=1)
+    blocked = solve(one_week, "A", time_limit_seconds=10, horizon_extension_weeks=0)
+    assert blocked.feasible is False
+    assert blocked.infeasibility_reasons
+
+    two_weeks = make_compiled(contracts, activities, capacities=capacities, horizon_weeks=2)
+    allowed = solve(two_weeks, "A", time_limit_seconds=10, horizon_extension_weeks=0)
+    assert allowed.feasible
+    pm_weeks = {row.week for row in allowed.access if row.activity_id == "A1"}
+    c_weeks = {row.week for row in allowed.access if row.activity_id == "A2"}
+    assert pm_weeks.isdisjoint(c_weeks)
+    assert all(used == 1 for used in location_positions(allowed).values())
+
+
+def test_capacity_counts_one_possession_per_used_physical_night():
+    """Workfront 1 spreads four C accesses over four physical possession slots."""
+
+    compiled = make_compiled(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_maximum_access_per_week": 4,
+                "number_of_workfronts": 1,
+            }
+        ],
+        [
+            {
+                "activity_id": f"A{index}",
+                "contract_number": "C1",
+                **_single_sector(),
+                "total_accesses": 1,
+            }
+            for index in range(1, 5)
+        ],
+        capacities={"SEC:ALP:S01_S02:EB": 4},
+        horizon_weeks=1,
+    )
+    result = solve(compiled, "A", time_limit_seconds=10, horizon_extension_weeks=0)
+
+    assert result.feasible
+    assert len({row.physical_night for row in result.access}) == 4
+    assert location_positions(result)[("SEC:ALP:S01_S02:EB", 1)] == 4
+    assert result.objective_breakdown["excess_access_nights_total"] == 0
+    assert result.objective_breakdown["capacity_hotspots"] == []
+
+
+def test_capacity_four_counts_four_separate_possessions():
+    """Four PM accesses need four possessions; supply 4 fits them exactly."""
+
+    compiled = make_compiled(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PM",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_maximum_access_per_week": 4,
+                "number_of_workfronts": 4,
+            }
+        ],
+        [
+            {
+                "activity_id": f"A{index}",
+                "contract_number": "C1",
+                **_single_sector(),
+                "total_accesses": 1,
+            }
+            for index in range(1, 5)
+        ],
+        capacities={"SEC:ALP:S01_S02:EB": 4},
+        horizon_weeks=1,
+    )
+    result = solve(compiled, "A", time_limit_seconds=10, horizon_extension_weeks=0)
+
+    assert result.feasible
+    assert location_positions(result)[("SEC:ALP:S01_S02:EB", 1)] == 4
+    assert result.objective_breakdown["excess_access_nights_total"] == 0
+    assert result.objective_breakdown["capacity_hotspots"] == []
+
+
+def test_objective_breakdown_reports_earliness_days():
+    planned = HORIZON_START + timedelta(days=100)
+    compiled = make_compiled(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+                "planned_completion_date": planned,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                **_single_sector(),
+                "total_accesses": 1,
+            }
+        ],
+    )
+    result = solve(compiled, "A", time_limit_seconds=10)
+
+    assert result.feasible
+    simulated = result.contract_results[0].simulated_completion_date
+    assert result.objective_breakdown["earliness_days_total"] == max(
+        0, (planned - simulated).days
+    )
