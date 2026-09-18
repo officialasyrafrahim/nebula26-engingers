@@ -38,7 +38,8 @@ The system is a planning decision-support tool. It does not write to a CMMS/EAM,
 | Exact CSV export for three scenarios | In | Required deliverables |
 | Async solve worker with explicit lifecycle | In | Keeps API responsive |
 | Deterministic constraint explanations | In | Explainability requirement |
-| Hosted upload/run/timeline/capacity/download UI | In | Judge workflow |
+| Browser upload/run/timeline/capacity/download UI | In | Judge workflow; runs locally or via Compose, no public URL shipped |
+| Public hosted deployment, generated A/B/C answer keys, video, operations runbook | Not repository-complete | Outside the tree; must not be reported as done |
 | Dynamic replanning with minimal churn | Bonus | Urgent-maintenance extension |
 | Natural-language query over structured evidence | Bonus | Must never own feasibility |
 | Predictive maintenance, anomaly detection, asset-health ML | Out | Not asked by PS1 v2.0 |
@@ -59,7 +60,7 @@ Core workflow: **Ingest -> Model -> Optimise -> Validate -> Explain -> Export**.
 | 2. Model | Typed records | Build network; expand routes; compile closures, possession mixes, caps, dependencies | `CompiledInstance` | `modules/compiler`, `domain/rail` (DEV-1) | Reject non-traversable routes, unknown references, predecessor cycles |
 | 3. Optimise | `CompiledInstance` + scenario | CP-SAT search with hard constraints and scenario objective | Candidate placement + occupancy | `modules/solver` (DEV-2) | Complete workload attempted before any unsatisfied terminal state |
 | 4. Validate | Candidate + instance | Run official validator, else fallback equivalent validator | Validator report (`feasible`, violations, scores) | `modules/validator` (DEV-3) | Zero hard violations required for accepted/exportable state |
-| 5. Explain | Candidate + validator + solver evidence | Derive deterministic reason codes and text | Per-activity explanations | `modules/explain` (DEV-4, planned; not yet present) | Explanation available with no LLM |
+| 5. Explain | Candidate + validator + solver evidence | Derive deterministic reason codes and text | Per-activity explanations in `ScheduleResponse` | `modules/solver` reason codes + `modules/runs` (DEV-4) | Explanation available with no LLM |
 | 6. Export | Validated candidate | Emit exact per-scenario CSVs and preserve run artifacts | `SCHEDULE_ACCESS.csv`, `SCHEDULE_OCCUPANCY.csv`, `RESULTS.csv` | `modules/export` (DEV-3) | Gate holds; A/B/C stay separate answer keys |
 
 ## 4. Repository Tree
@@ -99,8 +100,8 @@ engingers/
           mixes.py
           dependencies.py
           policy.py                   # single capacity/simultaneity policy switch
-        solver/                       # DEV-2: CP-SAT plus fallback
-          model.py                    # lazy OR-Tools import (native optional)
+        solver/                       # DEV-2: CP-SAT scenario solver (OR-Tools required)
+          model.py                    # lazy OR-Tools import; raises OrToolsUnavailableError
           variables.py
           constraints.py
           objectives.py
@@ -119,7 +120,6 @@ engingers/
           api.py
           service.py
           queue.py
-        explain/                      # DEV-4: F-EXPLAIN-001/002 (planned)
       workers/
         rail_solver_worker.py         # DEV-2 dedicated queue consumer
       tests/
@@ -127,14 +127,20 @@ engingers/
         test_rail_solver.py test_scenarios_abc.py test_validator_fallback.py
         test_export_schemas.py test_runs_api.py test_worker_async.py test_smoke.py
     pyproject.toml                    # extras: dev, solver, postgres
-  frontend/                           # placeholder health check today; screens in Section 16 (planned)
+  frontend/                           # implemented single-page control board (Section 16)
+    Dockerfile                        # multi-stage Vite build and nginx runtime
+    nginx/default.conf.template       # SPA serving and same-origin API proxy
     src/
       App.tsx
       api/client.ts
+      components/                     # UploadPanel, ScenarioLauncher, JobMonitor,
+                                      # ActivityTimeline, HotspotsPanel, ValidatorGate,
+                                      # ExplanationsPanel, DownloadPanel, ...
+      hooks/useJobPolling.ts
+      lib/
   deploy/
     docker-compose.yml                # the only stack (PostgreSQL 16, Redis 7, api, worker, web)
     .env.example
-    web.vite.config.ts                # compose-only Vite proxy override
     validator/README.md               # optional official-validator drop-in (not shipped)
   data/
     public-instance/                  # eight input CSVs
@@ -311,7 +317,7 @@ Column order is significant. Nullable columns are marked. Dates are ISO `YYYY-MM
 | 7 | `07_PROJECT_DETAILS.csv` | `contract_number,contract_description,contract_award_date,activity_type,nature_of_activity,contract_priority,contract_completion_date,planned_completion_date,number_of_workfronts,access_type,number_of_maximum_access_per_week` | strings, dates, ints; priority 1..3; access_type in {PM,PC,C}; cap >= 1 |
 | 8 | `08_ACTIVITY_DETAILS.csv` | `activity_id,contract_number,activity_type,start_location_id,end_location_id,total_accesses,planned_start_date,predecessor_activity_id,activity_priority` | strings, int, date, nullable predecessor, priority 1..3 |
 
-Reference values from the public instance: `horizon_start=2027-01-04`, `horizon_weeks=30`; 2 lines; 20 station rows (H01/H02 appear on both lines); 18 tunnel sectors; 76 location-supply rows; 3 buffer rules; 14 contracts; 50 activities.
+Reference values from the public instance: `horizon_start=2027-01-04`, `horizon_weeks=30`; 2 lines; 20 station rows (H01/H02 appear on both lines); 18 tunnel sectors; 76 location-supply rows; 3 buffer rules; 14 contracts; 54 activities.
 
 Validation rules at ingest:
 
@@ -393,27 +399,19 @@ Compilation steps, all derived from tables and never hard-coded per activity:
 1. `closure(activity)`: start from the occupied tunnel sector span, extend by `up_to_buffer_sectors` on both ends along the line `seq`, and add the platform locations of every station in the extended span, on the same bound.
 2. `mirror(activity)`: if `opposite_bound_required`, repeat the closure on the opposite bound of the same line.
 3. `interchange(activity)`: if nature is `Live` and the route span includes `SEC:<line>:H01_H02:<bound>`, add the other line's `H01_H02` tunnel sector and H01/H02 platform locations. The bound treatment here is an ambiguity (Section 19, A-4); the conservative default adds both bounds.
-4. `possession_mix`: per `(location_id, week, access_night)` the present activities must form exactly one legal possession: `{PM}`, `{PC}` plus up to 3 `C`, or up to 4 `C`. Two `PC` at the same location-night is illegal.
-5. `co_share_allowed`: `PC+C` and `C+C` are compatible; `PM` is compatible with nothing; `PC+PC` is incompatible. Incompatible activities may not share a location-night.
+4. `possession_mix`: per internal `(location_id, week, physical_slot)` the present activities must form exactly one legal possession: `{PM}`, `{PC}` plus up to 3 `C`, or up to 4 `C`. Two `PC` in one slot is illegal.
+5. `co_share_allowed`: `PC+C` and `C+C` are compatible; `PM` is compatible with nothing; `PC+PC` is incompatible. Compatible work may share a physical slot only when the routes have a common occupied location.
 6. `predecessor`: finish-to-start with zero lag; `successor_first_week > predecessor_last_week` (strictly later week), cross-contract allowed, cycles rejected at ingest.
 7. `planned_start`: no access before `ceil_to_week(planned_start_date)`.
 8. `weekly_cap`: per `(contract, activity_type, week)` the number of distinct `access_night` values used is at most `number_of_maximum_access_per_week`.
 9. `workfront`: per `(contract, activity_type, week, access_night)` the number of distinct concurrent activities is at most `number_of_workfronts`.
 10. `eclo_window` (Scenario C only): all `eclo=1` accesses affecting a line fall in one continuous span of at most two calendar weeks, chosen independently per line; a cross-line Live ECLO must satisfy both windows at once.
 
-### 9.1 Same-access-night closure conflict assumption and its ambiguity
+### 9.1 Physical slots and fallback calibration
 
-Closures are physical-night facts, but the submission schema exposes no absolute night. The only cross-activity night key is `(week, access_night)`. The compiler therefore adopts this assumption:
+Closures are physical-night facts, but `access_night` is local to each contract and activity type. The solver therefore assigns an internal physical slot in each week. It enforces closures, legal mixes and location capacity on that slot, then ranks each contract's used slots to produce local `access_night` values. At a location-week, one used physical slot becomes one `co_share_group`.
 
-> **A-1 (working assumption).** Two accesses are simultaneous if and only if they share `week` and `access_night`. `access_night` is a global night-slot label within a week; each contract/type uses a subset of the same labels. Closures conflict when their compiled closure spans intersect at a location on the same `(week, access_night)`, unless the two activities are in the same `co_share_group` at a shared location.
-
-Consequences encoded in the model:
-
-1. A possession at `(location_id, week, co_share_group)` may span several `access_night` values (a gang returning across nights), but at most one `co_share_group` may be present at a given `(location_id, week, access_night)`.
-2. Different `co_share_group` values at the same location-week are separate possessions and must sit on different `access_night` values; buffers then apply normally between them.
-3. Location capacity, closure checks, and `excess_access_nights` are all evaluated on this night grid.
-
-Ambiguity, recorded fully as A-1 and A-2 in Section 19: `PS1_README` describes `access_night` as "a local accounting index per contract+type+week, independent of location/sector", which taken literally makes cross-contract conflicts undefined and capacity under-determined. The public sample also contains `SEC:BET:H01_H02:EB` week 16 with A003 on night 3 and A007/A040 on night 1, all in group `b1`, plus `SEC:BET:S15_S16:EB` week 23 with groups `b4` and `b1` on different nights. This shows that group identity and night identity are not interchangeable, so the counting rule cannot be derived from the spec alone. Mitigation: isolate the interpretation behind `modules/compiler/policy.py` and `modules/validator/checks/capacity.py` with a single documented policy switch, and make the fallback validator implement the sample-consistent rule so the public sample validates cleanly.
+The output schema cannot reconstruct that global slot map. The public sample also uses one location-scoped group across different local night values and gives one activity different group labels along its route. The fallback therefore uses a sample-calibrated existence check. It colours contract/type/week/local-night classes into seven physical nights, counts submitted groups for capacity, validates each group mix, and applies closure checks where a common occupied location makes group membership observable. It does not compose group labels into a transitive global identity. Buffer-only cross-contract simultaneity remains unprovable until the official validator is supplied.
 
 ## 10. Scenario Policy Matrix
 
@@ -440,7 +438,7 @@ Ambiguity, recorded fully as A-1 and A-2 in Section 19: `PS1_README` describes `
 Objective expressions (penalties, lower is better):
 
 ```
-Score_A = sum over contracts k of contract_weight(k) * (1 + activity_nudge) * overrun_days(k)
+Score_A = sum over activities a of contract_weight(contract(a)) * (1 + activity_nudge(a)) * overrun_days(a)
 Score_B = 7 * excess_access_nights_total + 5 * eclo_nights_total
 Score_C = Score_A + 7 * excess_access_nights_total + 5 * eclo_nights_total
 
@@ -460,7 +458,8 @@ A  activities (natural activity_id)
 K  contracts (natural contract_number)
 L  locations (natural location_id)
 W  weeks 1..H (H = horizon_weeks), W+ = H+1 .. H+E (extension, E configurable)
-N(k) = 1..cap_k                 per contract/type weekly cap
+P  physical slots in a calendar week (normally 1..7)
+N(k) = 1..cap_k                 local output night index per contract/type
 E  = {0, 1}                     eclo flag (0 standard, 1 ECLO)
 T  {1, 2, 3}                    nature: Live, Non-live (Consist), Non-live (Others)
 ```
@@ -468,51 +467,53 @@ T  {1, 2, 3}                    nature: Live, Non-live (Consist), Non-live (Othe
 Decision variables:
 
 ```
-x[a, w, n, e] in {0,1}   access for activity a, week w, night n, eclo e
-present[a, w, n] in {0,1} = sum_e x[a, w, n, e]        (access present)
-cover[a, l, w, n]        = present[a, w, n] for all l in route(a); 0 otherwise (derived)
-g[a, l, w] in {0..G}     possession group label at a location-week (0 = absent)
-pos[l, w] in {0..G}      number of distinct co_share groups at a location-week
+x[a, w, p, e] in {0,1}   access for activity a, week w, physical slot p, eclo e
+present[a, w, p]          = sum_e x[a,w,p,e]
+week_present[a, w]        = sum_p present[a,w,p]
+slot_used[l, w, p]        = 1 iff a route occupant uses physical slot p
+pos[l, w]                 = sum_p slot_used[l,w,p]
 first_w[a], last_w[a]    first and last week an activity is scheduled
 comp[k]                  contract completion week
-over[k] in Z>=0          contract overrun days
+activity_over[a] in Z>=0 activity overrun days against its contract's planned date
 exc[l, w] in Z>=0        excess possessions above supply_capacity at a location-week
 eclo[a, w, n]            eclo indicator (same as e=1 variable)
 ```
+
+The model has no string `co_share_group` decision variable. Each used physical slot at a location-week is one possession. After solving, `modules/solver/engine.py` labels those slots `b1`, `b2`, and so on in physical-slot order. The output may contain different local `access_night` values within one group because those values belong to different contract namespaces.
 
 Hard constraints (tags match validator rules):
 
 1. `workload`: `sum_{w,n} (2*x[a,w,n,0] + 3*x[a,w,n,1]) >= 2 * total_accesses[a]` (half-units avoid fractions).
 2. `planned_start`: `x[a,w,n,e] = 0` for `w < start_week(a)`.
 3. `one_access_per_week`: `sum_n sum_e x[a,w,n,e] <= 1` for every activity-week.
-4. `weekly_allocation`: nights are restricted to `1..cap_k`, which bounds distinct `access_night` values per contract/type/week; also require at most one access per `(a,w,n)`.
+4. `weekly_allocation`: each contract/type uses at most `cap_k` distinct physical slots in a week; those slots are ranked to `1..cap_k` when exported as local `access_night` values.
 5. `predecessor`: for each predecessor edge `p -> s`, `first_w[s] >= last_w[p] + 1`.
 6. `workfront`: for each `(contract, activity_type, w, n)`, `sum_a present[a,w,n] <= number_of_workfronts`.
-7. `possession_mix`: at each `(l, w, n)`, the present access types form exactly one legal set: one `PM` alone, or one `PC` with at most 3 `C`, or at most 4 `C`; at most one group may be present at that `(l,w,n)`.
-8. `closure`: for each `(w, n)`, for every pair of present activities whose compiled closure spans intersect at a location, either they share a `co_share_group` at that location or they are forbidden from both being present. Encoded as conflict clauses over `present`.
-9. `capacity`: `pos[l, w] = number of distinct non-zero g[a,l,w]`; Scenario A requires `pos[l,w] <= supply_capacity`; Scenario C hard-requires `pos[l,w] <= supply_capacity + 1` and soft-costs the +1; Scenario B leaves excess unbounded and soft-costs it.
+7. `possession_mix`: at each `(l,w,p)`, the present access types form one legal set: one `PM` alone, one `PC` with at most 3 `C`, or at most 4 `C`.
+8. `closure`: conflicting activities cannot share a physical slot. The waiver requires compatible access types and a common occupied route location, where the slot mix places them in one possession.
+9. `capacity`: `pos[l,w] = sum_p slot_used[l,w,p]`. Scenario A requires `pos[l,w] <= supply_capacity`; Scenario C hard-requires `pos[l,w] <= supply_capacity + 1` and soft-costs the +1; Scenario B leaves excess unbounded and soft-costs it.
 10. `eclo_A`: `x[a,w,n,1] = 0` for all a. `eclo_window_C`: for each line, the weeks containing any `eclo=1` access form a set that fits inside two consecutive calendar weeks; cross-line Live ECLO must satisfy both lines.
 11. `planned_date_B`: `comp[k] <= planned_completion_week(k)` for every contract.
-12. `horizon`: accesses may be placed in `W+` when needed; extension grows monotonically until workload is complete.
+12. `horizon`: the first attempt uses the configured extension. Flexible-date scenarios grow toward `latest_planned_start + total_accesses` within the overall time budget. A bounded or timed-out search without an incumbent reports `UNKNOWN`, not proven infeasibility. Scenario B may still prove infeasible against its hard completion dates.
 
 Objective construction:
 
 ```
 minimise:
-  A: sum_k contract_weight(k) * (1 + nudge(k)) * over[k]
+  A: sum_a contract_weight(contract(a)) * (1 + nudge(a)) * activity_over[a]
   B: 7 * sum_{l,w} exc[l,w] + 5 * sum eclo[a,w,n]
   C: A-term + B-term
 ```
 
-Overrun term: `over[k] >= 0` and `over[k] * 7 >= day(comp[k] end date) - planned_completion_date(k)`; the solver chooses the smallest feasible overrun because it minimises. The activity nudge uses the `activity_priority` of the activity whose last access sets `comp[k]`; if ambiguous, the highest-priority late activity in the contract is used to stay validator-consistent.
+Contract result rows are derived from `comp[k]` after solving. The scored objective uses one `activity_over[a]` term per activity, based on that activity's final access week and its contract's planned date. Each term uses the contract priority band and that activity's own priority nudge, matching PS1 section 2.7.
 
 Search strategy and determinism:
 
 1. CP-SAT with `random_seed = seed` (default 42) and `num_search_workers = 1`.
 2. Variable creation iterates activities in deterministic order: contract priority ascending, then activity_priority ascending, then activity_id ascending, then week, then night, then eclo.
 3. Tie-breaking uses lexicographic activity/week/night ordering so repeated runs on the same instance and config are reproducible.
-4. Time limit from the job; on timeout the worker re-runs with the fallback greedy engine if no incumbent exists, otherwise returns the best incumbent.
-5. The greedy fallback (`solver/fallback.py`) schedules activities in the same deterministic order, always finds a complete placement by extending the horizon, and reports `feasible=True` for any parseable instance. It never returns "impossible" for congestion; only malformed instances fail before solving.
+4. Time limit from the job. On timeout the solver returns the best incumbent if one exists; with no incumbent the job is `TIMED_OUT`. The worker never substitutes a different engine.
+5. OR-Tools is required to solve. If the native runtime cannot be imported, `load_cp_model` raises `OrToolsUnavailableError` and the job fails with that message. The independent fallback is a validator only and never produces a schedule.
 
 Congestion policy: when nominal supply is tight, the solver first co-shares compatible work, then places in later weeks, then (B/C) spends excess supply and ECLO, and only then accepts priority-weighted overrun (A/C). It never drops an activity and never truncates `total_accesses`.
 
@@ -529,7 +530,7 @@ Official validator discovery (`modules/validator/adapter.py`):
 Fallback equivalent validator (`modules/validator/fallback_validator.py`):
 
 1. Reads the eight instance CSVs and the three submission CSVs; it never reads solver objects. It re-derives the network, routes, closures and mixes independently so it is a genuine oracle rather than a self-check.
-2. Checks every hard rule in the scenario policy matrix and computes every soft term in the objective expressions.
+2. Checks every hard rule observable from the published schema and computes every soft term. Physical-night closure reconstruction is sample-calibrated as described in Section 9.1 and remains provisional until official calibration.
 3. Emits the exact report schema in Section 12.1 and sets `authority = "fallback"`.
 
 Report schema (matches `PS1_README` section 2.7):
@@ -582,7 +583,7 @@ Tables:
 | `validator_report_rows` | Independent validator report and gate for a job | id, job_id (unique), scenario, feasible, workload_complete, ready_for_submission, authority, report (JSON), created_at |
 | `audit_logs` | Significant action trail | id, actor, action, entity_type, entity_id, before (JSON), after (JSON), created_at |
 
-The eight source files are stored verbatim as JSON on `planning_runs`; there is no separate raw-file table and no object store. `modules/explain` (planned) will add an explanation store when it lands.
+The eight source files are stored verbatim as JSON on `planning_runs`; there is no separate raw-file table and no object store. There is no explanation table: reason codes live on `scenario_jobs.result` and are rendered on read by `modules/runs/service.py`.
 
 API (prefix `/api/v1`, JSON unless noted). All long work is queued; no solve runs inline. Development authentication is a header stub: `X-User-Id` (default `dev-user`) and `X-User-Role` (`PLANNER` | `ADMIN` | `VIEWER`, default `PLANNER`).
 
@@ -593,6 +594,7 @@ API (prefix `/api/v1`, JSON unless noted). All long work is queued; no solve run
 | GET | `/runs/{run_id}` | - | `PlanningRunRead` | |
 | GET | `/runs/{run_id}/network` | - | `NetworkResponse` | parsed network, expanded routes and location capacities |
 | POST | `/runs/{run_id}/jobs` | `{scenario, time_limit_seconds?, seed?}` | 202 `ScenarioJobRead` | 409 when that scenario already has an active job; requires PLANNER/ADMIN |
+| GET | `/runs/{run_id}/jobs` | - | `ScenarioJobRead[]` | a run's jobs newest first |
 | GET | `/runs/{run_id}/jobs/{job_id}` | - | `ScenarioJobRead` | lifecycle state and result |
 | POST | `/runs/{run_id}/jobs/{job_id}/cancel` | - | `ScenarioJobRead` | best effort; 409 in a terminal state |
 | GET | `/runs/{run_id}/jobs/{job_id}/schedule` | - | `ScheduleResponse` | 409 until the job is `COMPLETED` |
@@ -600,13 +602,13 @@ API (prefix `/api/v1`, JSON unless noted). All long work is queued; no solve run
 | GET | `/runs/{run_id}/jobs/{job_id}/export` | - | zip download | 409 unless `ready_for_submission`; the scenario archive name is set in `Content-Disposition` |
 | GET | `/healthz` | - | `{"status":"ok"}` | unauthenticated liveness |
 
-Representation rules: natural string keys in all payloads; weeks are 1-based; ECLO is boolean; `co_share_group` is an opaque string; timestamps are ISO-8601 UTC.
+Representation rules: natural string keys in all payloads; weeks are 1-based; ECLO is boolean; `co_share_group` is an opaque string; timestamps are ISO-8601 UTC. `ScheduleResponse.explanations` carries the deterministic per-activity explanations for a completed job.
 
 ## 14. Async Worker
 
 `solve` lives in `modules/solver/engine.py`; the queue consumer entry point is `python -m app.workers.rail_solver_worker` (`app/workers/rail_solver_worker.py`).
 
-States (`app/domain/enums.py`): `QUEUED -> RUNNING -> VALIDATING -> COMPLETED | FAILED | TIMED_OUT | CANCELLED`, plus `INFEASIBLE`. `COMPLETED` carries the validator report and a job result with `authority`, `ready_for_submission` and row counts. `INFEASIBLE` is used only when the model itself is proven infeasible; congestion is never reported as infeasible because the deterministic fallback always produces a complete placement. `FAILED` is reserved for malformed or parse-level defects (for example `RailDataError`, or native OR-Tools unavailable).
+States (`app/domain/enums.py`): `QUEUED -> RUNNING -> VALIDATING -> COMPLETED | FAILED | TIMED_OUT | CANCELLED`, plus `INFEASIBLE`. `COMPLETED` carries the validator report and a job result with `authority`, `ready_for_submission`, row counts and the per-activity `binding_reasons`. `INFEASIBLE` is used only when the model itself is proven infeasible. Congestion is handled inside CP-SAT by horizon extension and co-sharing; a timeout with no incumbent becomes `TIMED_OUT`. `FAILED` is reserved for malformed or parse-level defects (for example `RailDataError`, or native OR-Tools unavailable).
 
 Queue abstraction (`modules/runs/queue.py`, selected by `RAO_QUEUE_BACKEND`):
 
@@ -621,44 +623,49 @@ Job rules: `POST /runs/{run_id}/jobs` returns 202 immediately; `time_limit_secon
 
 ## 15. Deterministic Explanations
 
-`modules/explain` derives explanations from solver evidence and the validator report only; no LLM is required or allowed on this path.
+Explanations are solver reason codes, not a separate subsystem. The CP-SAT engine derives a binding reason set per activity and returns it as `SolverResult.binding_reasons`. The worker persists that mapping on `ScenarioJob.result["binding_reasons"]`, and the schedule read model rebuilds the evidence from the persisted placements and recompiled instance, then renders `ScheduleResponse.explanations` (one `ActivityExplanation` per activity). There is no `modules/explain` package, no explanation table and no LLM on this path.
 
-Reason codes:
+Codes emitted by the current engine:
 
 | Code | Meaning |
 | --- | --- |
-| `PLANNED_START` | Earliest week bounded by `planned_start_date` |
-| `PREDECESSOR` | Successor pushed to a later week than the predecessor |
-| `BUFFER_CLOSURE` | Placed away from another activity's exclusion buffer |
-| `LIVE_MIRROR` | Opposite-bound closure forced a different night/week |
-| `INTERCHANGE` | H01/H02 cross-line closure forced a different night/week |
-| `CAPACITY` | Location-week supply was full |
-| `WEEKLY_CAP` | Contract weekly access cap reached |
-| `WORKFRONT` | Contract workfront cap reached on a night |
-| `POSSESSION_MIX` | Legal PM/PC/C mix prevented a placement |
-| `CO_SHARE_PACKED` | Activity packed into a co-shared possession |
-| `ECLO_WINDOW` | ECLO constrained to the two-week line window (C) |
-| `PRIORITY_OVERRUN` | Activity/contract accepted overrun by priority tier |
-| `HORIZON_EXTENDED` | Workload completed past nominal horizon |
+| `PLANNED_START` | First access sits at the planned-start week |
+| `PREDECESSOR` | First access is the week immediately after the predecessor's last |
+| `CAPACITY` | A location-week was used at its capacity limit |
+| `WEEKLY_CAP` | The contract weekly access cap was reached |
+| `WORKFRONT` | The contract workfront cap was reached on a night |
+| `CO_SHARE_PACKED` | The activity shares a possession with at least one other |
+| `ECLO_WINDOW` | ECLO was constrained to the two-week line window (C) |
+| `PRIORITY_OVERRUN` | The contract completion exceeds its planned date |
+| `HORIZON_EXTENDED` | The activity is placed beyond the nominal horizon |
 
-For every activity the explainer records the binding reason on its first access (`why_this_week`), its access count (`why_this_many`), and any validator-derived delta (`what_if_later`). Text is produced from templates with the actual ids, weeks and locations, for example: `A004 first access week 21; predecessor A003 ended week 20; earliest legal week 21; co-shared with A025 at PLAT:ALP:S03:EB.` Explanations are stored per run and remain available when the LLM assistant is disabled.
+`BUFFER_CLOSURE`, `LIVE_MIRROR`, `INTERCHANGE` and `POSSESSION_MIX` remain part of the vocabulary and the UI renders them if present, but the current engine does not emit them.
 
-## 16. Frontend Screens
+Each explanation carries the reason codes, a deterministic prose summary built from actual ids and weeks, and an evidence map (first week, planned-start week, predecessor, horizon). Example: `A004 first access week 21; planned start week 20; predecessor A003 last access week 20; bounded by planned start; packed into a co-shared possession.` Explanations survive a process reload because they are rebuilt from persisted rows.
 
-React + TypeScript + Vite, consuming `/api/v1`. No scheduling logic in the UI. Today `frontend/` is a placeholder `App.tsx` that calls `/healthz`; the screens below are the target and are planned (DEV-4).
+## 16. Frontend
 
-| Screen | Route | Purpose |
+React + TypeScript + Vite, consuming `/api/v1`. No scheduling logic runs in the browser; the UI displays server-computed schedules and scores only.
+
+The frontend is a single-page control board (`frontend/src/App.tsx`), not a route-per-screen app. Implemented panels:
+
+| Panel | Component | Purpose |
 | --- | --- | --- |
-| Upload | `/upload` | Select the eight CSVs, show per-file parse report, create instance |
-| Run console | `/instances/:id/run` | Choose A/B/C, time limit and seed; show live job state and cancel |
-| Timeline | `/runs/:id/timeline` | Week-by-contract schedule, access nights, ECLO markers, co-share groups |
-| Capacity | `/runs/:id/capacity` | Location-week supply heatmap, hotspots, excess and ECLO counts |
-| Activity detail | `/runs/:id/activity/:activityId` | Placement, reason codes, deterministic explanation, predecessor chain |
-| Validator report | `/runs/:id/report` | Feasible flag, hard violations, score decomposition, authority (official/fallback) |
-| Run history | `/runs` | Past runs, scenarios, status, downloads |
-| (Bonus) What-if | `/runs/:id/what-if` | Reduce a location's supply and preview a minimal-churn replan |
+| Upload | `UploadPanel.tsx` | Drag in the eight named CSVs, stage/remove files, show per-file parse issues |
+| Run library and summaries | `RunLibrary.tsx`, `RunSummary.tsx`, `NetworkSummary.tsx` | List past runs, select one, show parse summary and parsed network |
+| Scenario dispatch | `ScenarioLauncher.tsx` | Choose A/B/C plus optional time limit and seed, dispatch, inspect prior jobs |
+| Job monitor | `JobMonitor.tsx`, `hooks/useJobPolling.ts` | Poll lifecycle, show counts, cancel an active job |
+| Track schematic | `TrackSchematic.tsx`, `lib/schematic.ts` | Linked track board for a selected week and optional night: both lines and bounds, stations and tunnel sectors in sequence order, with possession, safety-buffer, opposite-bound mirror, interchange and scenario-aware capacity overlays |
+| Possession drawer | `PossessionDrawer.tsx` | Selected activity detail: contract, nature, access type, workfront, total and scheduled accesses, ECLO, selected week and night, co-share group members, location capacity status and the deterministic why summary with reason codes from `ScheduleResponse.explanations` |
+| Timeline | `ActivityTimeline.tsx` | Week-by-access chips with effective night, ECLO flag, location and co-share group; chips are selectable and link to the schematic and drawer |
+| Capacity and ECLO | `HotspotsPanel.tsx`, `EcloPanel.tsx` | Location-week supply hotspots, excess severity and ECLO usage |
+| Contract results | `ContractTable.tsx` | Simulated completion date and overrun per contract |
+| Validator and score | `ValidatorGate.tsx`, `ScorePanel.tsx`, `ViolationsPanel.tsx` | Feasible/workload/ready checks, authority, score decomposition, hard violations |
+| Validation assurance | `AssurancePanel.tsx` | Three independent layers stacked with individual pass, fail or unavailable states: internal physical schedule checks from `ScheduleResponse.physical_checks`, provisional fallback schema validation, and official validation, plus a derived overall submission status |
+| Explanations | `ExplanationsPanel.tsx` | Deterministic reason codes and evidence per activity |
+| Download | `DownloadPanel.tsx` | Gated scenario zip download |
 
-Usability notes: the timeline defaults to the 2AM works-controller view (week columns, night rows, contract colours); hotspot cells link to the affected activities; downloads are enabled only when the gate passes and are labelled provisional under fallback validation.
+Usability notes: hotspot rows are coloured by scenario capacity policy (hard for A, soft allowance for B, +1 soft for C); downloads are enabled only when the validator gate passes and are labelled provisional while the fallback is the authority. The validation assurance panel stacks the three independent layers and derives the overall status without inventing one: `OFFICIALLY VALIDATED` only when the official validator passed feasibility and workload, `PROVISIONAL` when both the internal physical checks and the fallback validator pass with no official authority, and `NOT VALIDATED` otherwise with the failing layer named. Each physical check is shown with a compact pass or fail mark. When `physical_checks` is absent (older runs) the row says "not recorded for this run", that layer is never counted as passed, and the overall status degrades to not validated. Fallback success is never presented as authoritative acceptance, and the download wording states that provisional validation is provisional. The control board schematic and timeline share one selection: choosing an activity highlights it on the board, timeline and explanation list and opens the possession drawer. The night filter uses `ScheduleAccess.physical_night` when the API publishes it and otherwise falls back to the contract-local `access_night`, labelled as local night indices. Safety-buffer, opposite-bound mirror and interchange overlays render only from `NetworkResponse.activity_spans`; when that field is absent the three layers are hidden and the board says so rather than inferring them. The what-if sandbox from the earlier plan is not implemented (bonus backlog).
 
 ## 17. Deployment
 
@@ -670,9 +677,9 @@ Usability notes: the timeline defaults to the 2AM works-controller view (week co
 | `redis` | `redis:7-alpine` | transport-only job queue (`RAO_QUEUE_BACKEND=redis`) |
 | `api` | `backend/Dockerfile` -> `uvicorn app.main:create_app --factory` | run, job, schedule, report and export API |
 | `rail-solver-worker` | same image -> `python -m app.workers.rail_solver_worker` | CP-SAT solve and validation |
-| `web` | `node:20-alpine` + `deploy/web.vite.config.ts` | Vite UI, proxies `/api` and `/healthz` to `api:8000` |
+| `web` | multi-stage `frontend/Dockerfile` (`node:20-alpine` build, `nginx:1.27-alpine` runtime) | Static SPA, proxies `/api` and `/healthz` to `api:8000` |
 
-Every service declares `restart: unless-stopped`; `db`, `redis`, `api` and `web` have healthchecks; named volumes hold PostgreSQL data, Redis AOF and the web `node_modules`.
+Every service declares `restart: unless-stopped`; `db`, `redis`, `api` and `web` have healthchecks; named volumes hold PostgreSQL data and Redis AOF.
 
 The official validator is not shipped. `deploy/validator/` is bind-mounted read-only at `/opt/validator` in the worker only; set `RAO_VALIDATOR_COMMAND` (for example `python /opt/validator/validate.py`) to use it. The default empty value selects the fallback oracle. The image never pretends to contain a validator.
 
@@ -701,21 +708,21 @@ Dev/test substitutes: SQLite (`sqlite:///./rao_dev.db`), in-memory queue and an 
 | AT-15 | Hidden-instance judge flow | Upload unseen eight-CSV instance, run a scenario | Solver completes, validator shown, files downloadable from browser only | UX-01, UX-02 |
 | AT-16 | Dynamic disruption (bonus) | Reduce a location's supply mid-horizon | Impact assessed; minimal-churn replan; before/after visible | BON-01 |
 
-Coverage rule: every test in the matrix is exercised in CI against the fallback validator; AT-12 additionally asserts that the gate blocks export; AT-15 is exercised as an end-to-end smoke test on a held-out instance.
+CI runs backend lint, the Python test suite, published-sample validation, mandatory bounded A/B/C generation and the frontend production build. AT-12 asserts that the gate blocks export. Browser-level AT-15 coverage on a held-out instance remains open work.
 
 ## 19. Known Ambiguities
 
 | ID | Ambiguity | Evidence | Adopted resolution | Impact if wrong |
 | --- | --- | --- | --- | --- |
-| A-1 | `access_night` is per-contract local vs a global week-night label | `PS1_README` calls it local; closures/capacity are otherwise under-defined | Treat `(week, access_night)` as global; same label means simultaneous | If the official validator is laxer, our plan is stricter and still valid; if it synchronises differently, one policy switch changes behaviour |
-| A-2 | Location capacity counted per week vs per night; excess semantics | Sample `SEC:BET:H01_H02:EB` week 16 (nights 1 and 3, one group) and `SEC:BET:S15_S16:EB` week 23 (two groups on two nights) | Primary: at most one group per `(location, week, access_night)`; count distinct groups per `(location, week)` against `supply_capacity`; expose `RAIL_CAPACITY_POLICY` | Could change A hard-fail threshold and C +1 allowance |
-| A-3 | Whether a possession may span multiple access nights | Sample group `b1` appears on nights 1 and 3 at the same location-week | Yes; possession is scoped to `(location, week, group)`, nights are separate | Could inflate capacity if groups were meant single-night |
+| A-1 | `access_night` is local while closures require physical simultaneity | `PS1_README` calls it local and publishes no global slot | Solver uses internal physical slots and ranks them into local output nights. Fallback uses a seven-colour existence check over local classes and never equates numeric nights across contracts | Official validator may infer simultaneity differently |
+| A-2 | Location capacity counted per week vs per night; excess semantics | Sample `SEC:BET:H01_H02:EB` week 16 has nights 1 and 3 in one group | Count distinct submitted groups per location-week in validation. Solver counts used physical slots and emits one group per used slot | Score may differ if the official tool derives groups instead of trusting labels |
+| A-3 | Whether one group may contain different local access-night values | The sample uses group `b1` across local nights 1 and 3 | Yes. Local night values belong to separate contract namespaces. Group labels remain scoped to one location-week and are not composed globally by fallback validation | Global physical identity remains under-specified |
 | A-4 | Live interchange closure bound treatment on the other line | `PS1_README` says other line's H01/H02 platforms and sector, without bound | Conservative: add both bounds of the other line at H01/H02 | Over-closes; unlikely to invalidate, may reduce packing |
 | A-5 | Does Live interchange fire for any Live activity or only when the route includes H01_H02 | Wording ties it to the interchange | Fire only when the compiled span includes `SEC:<line>:H01_H02` (including via buffer) | Wrong trigger could over- or under-close |
 | A-6 | Exact `excess_access_nights_total` unit | Name says nights, ERD says location-week possession count | Count excess possessions over supply per location-week; keep one place for the count | Score mismatch against official validator |
-| A-7 | Activity nudge when several activities in a contract are late | `PS1_README` says scored per overrunning activity but overrun is contract-level | Use the highest-priority late activity's nudge; expose the exact validator formula | Minor soft-score mismatch |
+| A-7 | Activity nudge when several activities in a contract are late | `PS1_README` defines the weighted score per overrunning activity while `RESULTS.csv` reports contract completion | Score every activity from its own final access week against the contract planned date; keep contract overrun totals separate for `RESULTS.csv` | Official validator calibration may still reveal a different attribution rule |
 | A-8 | ECLO continuity "2 calendar weeks" boundary and cross-line Live interaction | Rule 10 wording | Two consecutive week indices per line; cross-line Live ECLO must fit both windows simultaneously | Could reject a valid C plan or accept an invalid one |
-| A-9 | Official validator absent from the data pack | Only `03_submission_sample` ships; `trackaccess` CLI is referenced but absent | Ship fallback equivalent validator and own `trackaccess` expander; keep adapter ready | Gate is provisional until official validator/command is supplied |
+| A-9 | Official validator absent from the data pack | Only `03_submission_sample` ships; `PS1_README` references a `trackaccess` CLI that is not provided | Ship the fallback equivalent validator and keep the adapter ready. Route expansion is implemented in-repo (`domain/rail/routes.py`, `modules/compiler/routes.py`); this repository ships no `trackaccess` CLI | Gate is provisional until the official validator/command is supplied |
 
 ## 20. Migration And Rollback
 
@@ -728,7 +735,7 @@ Migration to the rail pipeline is complete. The legacy RMIS application code has
 5. Replaced the compose stack in place: TimescaleDB became `postgres:16` and MinIO was removed.
 6. Settings are `RAO_*` only; the validator adapter also honours the legacy `RAIL_VALIDATOR_COMMAND` name for direct calls, but no `RMIS_*` setting remains in the rail path.
 
-Current rail modules (all landed): `domain/rail/`, `modules/{instance,compiler,solver,validator,export,runs}/`, `workers/rail_solver_worker.py`, the rail router mounted from `app/main.py`, and the `deploy/docker-compose.yml` stack. `modules/explain/` and the full frontend screens are the remaining planned work (Sections 3 and 16).
+Current rail modules: `domain/rail/`, `modules/{instance,compiler,solver,validator,export,runs}/`, `workers/rail_solver_worker.py`, the rail router mounted from `app/main.py`, the frontend control board and the `deploy/docker-compose.yml` stack. The PS1 alignment audit added core follow-up work for explicit physical possession slots, adaptive horizon growth, fallback-validator parity, mandatory A/B/C generation, complete displacement evidence and production deployment. Section 21 and `docs/team/feature-registry.json` assign this work.
 
 Rollback: the repository is a single rail tree. Recover any deleted legacy file or the previous stack from git history (`git log --diff-filter=D`) and redeploy. There is no dual-run path and no feature flag around legacy routers.
 
@@ -738,17 +745,17 @@ Ownership is delivery responsibility, not exclusive edit permission. Cross-lane 
 
 | Developer | Lane | Primary paths | Owned features | Interface with others |
 | --- | --- | --- | --- | --- |
-| DEV-1 | Instance and Domain Compiler | `app/modules/instance/`, `app/modules/compiler/`, `app/domain/rail/` | F-INSTANCE-001/002/003, F-COMPILER-001 | Publishes `CompiledInstance` and closure/mix/dependency structures to DEV-2; consumes nothing from others |
-| DEV-2 | Scenario Solver and Worker | `app/modules/solver/`, `app/workers/rail_solver_worker.py` | F-WORKER-001, F-SOLVER-001..006, F-SCENARIO-001..003, F-BONUS-001/002 | Consumes `CompiledInstance`; publishes `RailSolverResult` with reason codes to DEV-3/DEV-4 |
-| DEV-3 | Validation, Export and Runs | `app/modules/validator/`, `app/modules/export/`, `app/modules/runs/`, `app/core/`, `app/main.py`, `scripts/`, `.github/`, `docs/team/` | F-VALIDATOR-001/002, F-EXPORT-001/002, F-RUNS-001/002, F-SHELL-001, F-GOVERNANCE-001 | Owns the read-only submission boundary and the gate; publishes validator reports to DEV-4 |
-| DEV-4 | Frontend, Deployment and Explainability | `frontend/`, `app/modules/explain/` (planned), `deploy/`, `docs/design/` | F-FRONTEND-001, F-UPLOAD-001, F-TIMELINE-001, F-EXPLAIN-001/002, F-DEPLOY-001/002, F-BONUS-003 | Consumes runs, schedule and validator reports over `/api/v1`; never duplicates solver logic |
+| DEV-1 | Instance and Domain Compiler | `app/modules/instance/`, `app/modules/compiler/`, `app/domain/rail/` | F-INSTANCE-001/002/003, F-COMPILER-001/002 | Publishes `CompiledInstance`, physical-slot semantics and closure/mix/dependency structures to DEV-2 and DEV-3 |
+| DEV-2 | Scenario Solver and Worker | `app/modules/solver/`, `app/workers/rail_solver_worker.py` | F-WORKER-001, F-SOLVER-001..008, F-SCENARIO-001..003, F-BONUS-001/002 | Consumes `CompiledInstance`; publishes physical placements and stable reason codes to DEV-3/DEV-4 |
+| DEV-3 | Validation, Export and Runs | `app/modules/validator/`, `app/modules/export/`, `app/modules/runs/`, `app/core/`, `app/main.py`, `scripts/`, `.github/`, `docs/team/` | F-VALIDATOR-001..004, F-EXPORT-001/002, F-RUNS-001/002, F-SHELL-001, F-GOVERNANCE-001, F-QA-001 | Owns the submission boundary, official-validator calibration, public answer generation and CI gate; publishes validator reports to DEV-4 |
+| DEV-4 | Frontend, Deployment and Explainability | `frontend/`, `deploy/`, `docs/design/` | F-FRONTEND-001, F-UPLOAD-001, F-TIMELINE-001, F-EXPLAIN-001/002, F-DEPLOY-001/002, F-BONUS-003 | Consumes runs, schedule and validator reports over `/api/v1`; never duplicates solver logic |
 
 Frozen interfaces between lanes:
 
 1. `CompiledInstance` (DEV-1 -> DEV-2) is the only solver input; no CSV column is read inside the solver.
 2. `RailSolverResult` (DEV-2 -> DEV-3/DEV-4) carries placements, occupancy, completions, objective breakdown and binding reason codes.
 3. The validator report schema (Section 12.1) is the only scoring truth; DEV-3 owns it.
-4. `/api/v1/rail/*` payloads use natural string keys; DEV-4 does not transform ids.
+4. `/api/v1/runs/*` payloads use natural string keys; DEV-4 does not transform ids. `GET /api/v1/runs/{run_id}/jobs` lists a run's jobs and `ScheduleResponse.explanations` carries the deterministic reason codes.
 
 ## 22. Traceability Summary
 

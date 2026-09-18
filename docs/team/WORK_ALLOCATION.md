@@ -8,21 +8,67 @@ The product is the Rail Access Optimisation and Replanning System from `Rail_Acc
 
 | Developer | Primary responsibility | Primary modules | Review partner | Remaining planned points |
 | --- | --- | --- | --- | ---: |
-| DEV-1 | Instance and Domain Compiler | instance parser, canonical network/domain model, route expansion, rule compiler | DEV-2 | 26 |
-| DEV-2 | Scenario Solver and Worker | CP-SAT constraints, hard/soft separation, Scenario A/B/C policies, async solve worker, replanning | DEV-1 | 90 |
-| DEV-3 | Validation, Export and Runs | reference validator adapter and gate, CSV export, run store and APIs, backend shell, governance tooling | DEV-4 | 36 |
-| DEV-4 | Frontend, Deployment and Explainability | upload/run UI, timeline and capacity views, deterministic explanation, diagnostics, hosted deployment | DEV-3 | 39 |
+| DEV-1 | Instance and Domain Compiler | instance parser, canonical network/domain model, route expansion, rule compiler, mapped datasets | DEV-2 | 18 |
+| DEV-2 | Scenario Solver and Worker | CP-SAT constraints, hard/soft separation, Scenario A/B/C policies, async solve worker, replanning | DEV-1 | 29 |
+| DEV-3 | Validation, Export and Runs | reference validator adapter and gate, physical witness checks, CSV export, run store and APIs, backend shell, governance tooling | DEV-4 | 32 |
+| DEV-4 | Frontend, Deployment and Explainability | upload/run UI, track schematic, assurance status, timeline and capacity views, deterministic explanation, diagnostics, hosted deployment | DEV-3 | 99 |
 
-Each developer has one immediately ready feature:
+Next work from the current statuses:
 
-| Developer | Next feature | Estimate |
+| Developer | Next work | Estimate |
 | --- | --- | ---: |
-| DEV-1 | `F-INSTANCE-001` Eight-file instance parsing and schema validation | 5 |
-| DEV-2 | `F-SOLVER-001` Workload conservation, planned start and predecessor constraints | 8 |
-| DEV-3 | `F-VALIDATOR-001` Reference validator adapter and report parsing | 5 |
-| DEV-4 | `F-UPLOAD-001` Hidden-instance upload and scenario run interface | 8 |
+| DEV-1 | Review `F-DATA-001` and `F-COMPILER-002` | 18 |
+| DEV-2 | Review `F-SOLVER-007/008` and the public A/B/C solver evidence | 13 |
+| DEV-3 | Review `F-VALIDATOR-005`, `F-RUNS-003`, `F-VALIDATOR-003` and `F-QA-001`; keep `F-VALIDATOR-004` blocked until the official validator is supplied | 32 |
+| DEV-4 | Review `F-CONTROL-006`, `F-CONTROL-001/002` and the earlier frontend features; then `F-CONTROL-005`, `F-CONTROL-003`, `F-CONTROL-004` and `F-CONTROL-007` | 99 |
 
-Ownership means delivery responsibility, not exclusive edit permission. Cross-lane changes require the primary owner as an additional reviewer. Changes labeled `risk:safety`, `risk:data-egress`, `risk:integration` or `risk:migration` require the relevant lane owner even when another developer implements them. Feature paths are non-overlapping so two lanes can work in parallel without editing the same files.
+The basic-functionality work takes priority over `F-BONUS-001/002/003`. Bonus work remains in the registry but does not start until the core acceptance sequence below passes.
+
+## Core acceptance sequence
+
+| Order | Feature | Owner | Depends on | Required outcome |
+| ---: | --- | --- | --- | --- |
+| 1 | `F-COMPILER-002` | DEV-1 | PS1 semantic decision | `access_night` remains contract/type-local while compiled physical possession slots represent cross-contract simultaneity |
+| 2 | `F-SOLVER-007` | DEV-2 | `F-COMPILER-002` interface | Closures, mix rules, capacity and co-sharing use physical slots instead of equal local night numbers |
+| 3 | `F-VALIDATOR-003` | DEV-3 | `F-COMPILER-002` interface | Fallback validation applies the same physical-slot rules and includes cross-contract regression fixtures |
+| 4 | `F-SOLVER-008` | DEV-2 | Solver feasibility model | The solver grows the horizon within its time budget and does not report congestion as proven infeasibility |
+| 5 | `F-QA-001` | DEV-3 | `F-SOLVER-007/008`, `F-VALIDATOR-003` | One command generates separate A/B/C outputs; CI fails on solve, schema, workload or validation failure |
+| 6 | `F-EXPLAIN-001` | DEV-4 | Stable solver reason codes | Explanations cite buffers, mirroring, interchange, mix, capacity and co-sharing evidence for displaced work |
+| 7 | `F-DEPLOY-002` | DEV-4 | Production build and completed run flow | Compose serves a built frontend, the public deployment completes upload-to-download, and the runbook covers recovery |
+| 8 | `F-VALIDATOR-004` | DEV-3 | Official validator command | A/B/C and targeted semantic fixtures match official feasibility and score results |
+
+DEV-1 and DEV-2 must agree on the `CompiledInstance` physical-slot interface before either feature enters review. DEV-3 may build fallback fixtures in parallel, but must rebase them on that agreed interface. DEV-4 may complete production packaging while solver work proceeds. Displacement explanations must wait for stable reason codes from DEV-2.
+
+## Control board sequence
+
+The P6 milestone turns the result view into a railway possession control board. The governing brief is that a works controller should see where work is, when it happens, who owns it, how full the location is, what else is affected and why the planner placed it there, without reading raw CSVs.
+
+| Order | Feature | Owner | Depends on | Required outcome |
+| ---: | --- | --- | --- | --- |
+| 1 | `F-RUNS-003` | DEV-3 | Solver `AccessPlacement.physical_night` and compiled spans | The schedule API exposes the internal physical slot and the compiled closure, mirror and interchange spans. The published CSVs stay byte-identical in schema |
+| 2 | `F-CONTROL-001` | DEV-4 | `F-RUNS-003` and existing network/routes | A linked schematic shows lines, bounds, stations and sectors for a selected week and optional night, with possession, buffer, mirror, interchange and capacity overlays |
+| 3 | `F-CONTROL-002` | DEV-4 | `F-CONTROL-001` | Clicking a schematic segment, timeline bar or access chip selects the same activity everywhere, and a drawer shows contract, workfront, access type, workload, co-share members, capacity and the deterministic why summary |
+| 4 | `F-CONTROL-005` | DEV-4 | `F-CONTROL-002` and stable reason codes | The drawer answers why this week, why this night and why not earlier, using only persisted evidence |
+| 5 | `F-CONTROL-003` | DEV-4 | `F-CONTROL-001` and `F-CONTROL-002` | A Tonight mode removes planning chrome and shows the selected night's workfronts, attention items and next handbacks |
+| 6 | `F-CONTROL-004` | DEV-4 | `F-CONTROL-001/002` and runs of each scenario | Scenario A/B/C share one visual language so capacity policy, overrun and ECLO trade-offs compare side by side |
+
+Replan diff mode stays out of P6 until `F-BONUS-001` provides a minimal-churn replan to diff. CCTV and 3D remain integration hooks, not deliverables. The physical slot is shown as an internal planning fact and must never be labelled as live personnel presence.
+
+## Validation assurance layers
+
+The submission schema cannot uniquely reconstruct physical simultaneity from `access_night` and `co_share_group` alone, so the product distinguishes three independent checks and never presents one as another.
+
+| Layer | Proves | Authority | Surface |
+| --- | --- | --- | --- |
+| Physical schedule witness (`F-VALIDATOR-005`) | The solver's own persisted physical slots contain no simultaneous mix, closure, mirror, interchange, capacity or workfront conflict | Internal, strong | `physical_checks` on the schedule response |
+| Fallback submission validator | The exported CSVs conform to the current interpretation of the published rules | Provisional | Validator report with `authority = "fallback"` |
+| Official validator (`F-VALIDATOR-004`) | The submission matches the competition's authoritative interpretation | Final | Validator report with `authority = "official"` |
+
+Until the official validator is supplied, the UI shows a provisional submission status even when both internal layers pass. Download stays enabled for provisional plans, clearly labelled. The mapped sandbox in `p7-mapped-sandbox` changes presentation names only and never the solver identifiers.
+
+Safety review is wider than the default review pair for this sequence. DEV-1 reviews solver semantics. DEV-2 reviews compiled and validator semantics. DEV-3 reviews export, CI and deployment gates. DEV-4 reviews operator-facing diagnostics and the hosted workflow.
+
+Ownership means delivery responsibility, not exclusive edit permission. Cross-lane changes require the primary owner as an additional reviewer. Changes labeled `risk:safety`, `risk:data-egress`, `risk:integration` or `risk:migration` require the relevant lane owner even when another developer implements them. Some core features share compiler, solver and test paths. Their owners must agree on interfaces first and avoid parallel edits to the same file.
 
 ## Milestones
 
@@ -34,9 +80,11 @@ Ownership means delivery responsibility, not exclusive edit permission. Cross-la
 | `p3-scenario-optimisation` | Scenario A/B/C policies, scores and exact export | P3 - A/B/C optimisation |
 | `p4-hosted-workflow` | Upload, async job, timeline, downloads and deployment | P4 - Hosted workflow |
 | `p5-explainability` | Constraint reasons, displaced work and score decomposition | P5 - Explainability |
+| `p6-control-board` | Linked track schematic, possession drawer, assurance status, tonight mode and scenario comparison | P6 - Control board |
+| `p7-mapped-sandbox` | Real DTL/CCL topologies with synthetic programmes for demonstration and stress | P7 - Mapped sandbox |
 | `bonus` | Urgent-maintenance replanning, NL query and extensions | Bonus scope |
 
-Only already-existing generic governance and shell work is marked `done` (`F-WORKER-001`, `F-SHELL-001`, `F-GOVERNANCE-001`, `F-FRONTEND-001`, `F-DEPLOY-001`). Every new rail-access domain feature starts as `ready` or `backlog`.
+The `v0.3.0` baseline records the original rail instance, compiler, solver, scenario, validator, export, runs and upload features as done. The PS1 alignment follow-up implementation now passes the backend suite, authoritative sample gate, bounded public A/B/C generation and production frontend build. `F-COMPILER-002`, `F-SOLVER-007/008`, `F-VALIDATOR-003`, `F-QA-001`, `F-EXPLAIN-001` and `F-DEPLOY-002` await reviewer acceptance. The P6 control board has landed its first slice: `F-RUNS-003` publishes the internal physical slot and compiled activity spans, and `F-CONTROL-001/002` add the linked track schematic and possession drawer. The assurance layer has landed too: `F-VALIDATOR-005` adds the independent physical witness check, `F-CONTROL-006` renders the three-layer validation status, and `F-DATA-001` generates mapped DTL/CCL sandbox datasets. These await reviewer acceptance. `F-VALIDATOR-004` remains blocked until the official validator is supplied. `F-TIMELINE-001` and `F-EXPLAIN-002` remain in review. `F-CONTROL-003/004/005` and the bonus features remain in backlog.
 
 ## Feature lifecycle
 

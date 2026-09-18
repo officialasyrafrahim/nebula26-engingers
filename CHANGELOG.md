@@ -1,0 +1,28 @@
+# Changelog
+
+All notable changes to RAO are recorded here.
+
+## [Unreleased]
+
+### Added
+
+- Explicit physical possession slots and an independent persisted witness check.
+- Adaptive congestion-safe horizon growth for Scenarios A and C.
+- Reproducible public A/B/C answer generation and mandatory CI validation.
+- Linked railway schematic, possession drawer, capacity overlays and deterministic explanations.
+- Three-layer validation assurance for physical, fallback and official checks.
+- Production nginx frontend image and hosted deployment runbook.
+- Deterministic DTL/CCL mapped demonstration dataset generator.
+
+### Changed
+
+- `access_night` is derived as a contract-local export label rather than physical time.
+- `co_share_group` is derived from the location-week physical possession slot.
+- Public deployment ports bind to loopback by default for reverse-proxy hosting.
+- Fallback-only validation is labelled provisional in the web interface.
+
+### Fixed
+
+- Capacity now counts distinct physical possessions rather than local night labels.
+- Priority scoring follows the PS1 per-activity nudge inside the contract priority band.
+- Process reloads retain schedule jobs, physical evidence and explanations.

@@ -1,6 +1,6 @@
 # Rail Access Optimisation (RAO)
 
-RAO turns the eight published planning-instance CSVs into complete, safety-compliant, scenario-scored track possession schedules for Line Alpha (`ALP`) and Line Beta (`BET`). It reads the instance, builds a canonical network, solves Scenarios A/B/C, validates each answer independently, explains the trade-offs deterministically, and exports the exact submission files.
+RAO is a browser-accessible railway possession planning application. Judges and planners upload the eight planning-instance CSVs through the web interface, run Scenarios A/B/C through the queued solver API, inspect the linked track schematic and schedule evidence, then download exact submission files.
 
 Core workflow: **Ingest → Model → Optimise → Validate → Explain → Export**.
 
@@ -15,7 +15,8 @@ It is a planning decision-support tool. It does not control trains, write to a C
 | CP-SAT solver for Scenarios A/B/C | MinIO / object storage |
 | Independent validator gate (official adapter + fallback oracle) | CMMS/EAM write-back |
 | Exact A/B/C CSV export | Kubernetes, Kafka |
-| Async solve worker and deterministic reasons | Real-time train control |
+| Hosted upload-to-download web workflow | Real-time train control |
+| Async solve worker and deterministic reasons | Live personnel or CCTV tracking |
 | Scenario A/B/C distinct answer keys | Legacy RMIS predictive-maintenance modules |
 
 The legacy RMIS predictive-maintenance code (`assets`, `ingestion`, `condition`, `assessment`, `approvals`, `execution`, `integration`, `assistant`, `model_registry`, `planning`) has been **removed** from the repository. Git history preserves it; the current tree contains only the rail pipeline.
@@ -51,6 +52,8 @@ Completion mapping: `simulated_completion_date = week_end(horizon_start, max_wee
 
 Export gate: only `feasible && workload_complete` runs can download. Each scenario is a separate answer key; A/B/C outputs are never mixed.
 
+`access_night` stays contract/type-local. The solver schedules against an internal physical possession slot, applies closure, mix, workfront and capacity rules to that slot, then ranks each contract's used slots into local `access_night` values. At each location-week, one used physical slot becomes one deterministic `co_share_group`. The slot witness is stored internally but never added to the competition CSVs.
+
 ## Quickstart (native Python, SQLite)
 
 Requirements: Python 3.12+ (3.13 recommended). Node is needed only for the UI.
@@ -68,7 +71,7 @@ make dev              # uvicorn on http://localhost:8000
 
 ### NixOS native-library caveat
 
-The CP-SAT solver depends on the native OR-Tools runtime. On NixOS, `pip install` can succeed while `import ortools` still fails to locate `libstdc++` (`gcc`) and `zlib`. RAO keeps running without it: the API starts, the deterministic greedy fallback is available, and a solve job that cannot load CP-SAT surfaces a clear `OrToolsUnavailableError` instead of crashing the worker.
+The CP-SAT solver depends on the native OR-Tools runtime. On NixOS, `pip install` can succeed while `import ortools` still fails to locate `libstdc++` (`gcc`) and `zlib`. OR-Tools is required for solving. Without it the API still starts and serves runs and job state, but a solve job fails with a clear `OrToolsUnavailableError` instead of crashing the worker. The independent fallback validates stored submissions; it does not solve, so it is not a substitute for the solver.
 
 To use the native solver on NixOS, run inside a shell that puts those libraries on the loader path — for example a `nix-shell` or `nix develop` that provides `ortools`, `zlib` and `stdenv.cc.cc.lib`, exporting `LD_LIBRARY_PATH` as needed. Tests that require native CP-SAT skip when `cp_sat_available()` is false.
 
@@ -81,9 +84,17 @@ make logs
 make down
 ```
 
-Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, and `web` (Vite dev server on <http://localhost:5173>). There is no TimescaleDB and no MinIO.
+Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, and `web` (built SPA served by nginx on <http://localhost:5173>, proxying `/api` and `/healthz`). There is no TimescaleDB and no MinIO. See `docs/deployment-runbook.md` for the operator flow and recovery steps.
 
 **Fresh database required.** Tables are created with `Base.metadata.create_all`; there are no migrations. A database or volume created by the legacy RMIS stack is not compatible — start from a fresh volume, for example `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
+
+### Hosted web app
+
+The browser is the judge-facing entry point. It provides the hidden-instance upload, scenario dispatch, job polling, network schematic, timeline, physical assurance, fallback/official validator status and gated download. Browser requests remain same-origin: nginx serves the SPA and proxies `/api` and `/healthz` to FastAPI.
+
+For a public deployment, expose the web service through an HTTPS reverse proxy and keep PostgreSQL, Redis and the API bound to localhost or the Compose network. The application currently has a development role-header stub rather than production identity management, so protect the public URL with a reverse-proxy allowlist or authentication shared with the judges. Uploaded instance files remain inside PostgreSQL and are not sent to third-party services.
+
+The repository contains production images and the hosted runbook. Publishing the final URL still requires a host, DNS name and credentials supplied by the team.
 
 ## Architecture
 
@@ -91,8 +102,8 @@ Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, 
 Eight CSVs
   -> modules/instance      parse, validate, canonical PlanningInstance
   -> modules/compiler       route expansion, closures, mixes, dependencies, policy
-  -> modules/solver         CP-SAT, or the deterministic greedy fallback
-  -> modules/validator      official adapter, else the independent fallback oracle
+  -> modules/solver         CP-SAT physical-slot solve (OR-Tools required)
+  -> modules/validator      physical witness, official adapter, fallback oracle
   -> modules/export         exact SCHEDULE_ACCESS / SCHEDULE_OCCUPANCY / RESULTS
   -> modules/runs           FastAPI router, persistence, queue, zip download
   -> workers/rail_solver_worker   dedicated queue consumer
@@ -103,12 +114,12 @@ Eight CSVs
 | Instance | `backend/app/modules/instance/` | Eight-CSV parse, typed records, `PlanningInstance` |
 | Domain | `backend/app/domain/rail/` | Natural-key network, routes, compiled model, errors |
 | Compiler | `backend/app/modules/compiler/` | Route expansion, closures, possession mixes, dependencies, single policy switch |
-| Solver | `backend/app/modules/solver/` | CP-SAT model plus deterministic greedy fallback |
-| Validator | `backend/app/modules/validator/` | Official adapter, independent fallback oracle, per-rule checks |
+| Solver | `backend/app/modules/solver/` | CP-SAT model for A/B/C; OR-Tools is required to solve |
+| Validator | `backend/app/modules/validator/` | Physical witness check, official adapter, independent fallback oracle |
 | Export | `backend/app/modules/export/` | Exact CSV render/parse and scenario zip |
 | Runs | `backend/app/modules/runs/` | FastAPI router, service, Redis/in-memory queue |
 | Worker | `backend/app/workers/rail_solver_worker.py` | Dedicated queue consumer; the database is the authority |
-| Web | `frontend/` | Vite + React placeholder (health check only); target screens are in the design doc |
+| Web | `frontend/` | React control board: upload, linked track schematic, timeline, assurance layers, explanations, history, gated download |
 
 Persistence is SQLAlchemy 2.x with tables `planning_runs`, `scenario_jobs`, `schedule_access_rows`, `schedule_occupancy_rows`, `contract_result_rows`, `validator_report_rows` and `audit_logs`. PostgreSQL 16 in Compose, SQLite in dev/tests. The database is the authority; Redis is transport only.
 
@@ -129,7 +140,7 @@ Persistence is SQLAlchemy 2.x with tables `planning_runs`, `scenario_jobs`, `sch
 Objective (lower is better):
 
 ```
-Score_A = sum_k contract_weight(k) * (1 + activity_nudge) * overrun_days(k)
+Score_A = sum_a contract_weight(contract(a)) * (1 + activity_nudge(a)) * overrun_days(a)
 Score_B = 7 * excess_access_nights_total + 5 * eclo_nights_total
 Score_C = Score_A + Score_B
 ```
@@ -143,16 +154,19 @@ All endpoints are under `/api/v1`. Long work is queued and returns `202`; a solv
 | POST | `/api/v1/runs` | Upload exactly the eight instance files in the multipart field `files`; returns `201` with the run and parse summary, or `422` with per-file issues |
 | GET | `/api/v1/runs` | List runs newest first |
 | GET | `/api/v1/runs/{run_id}` | Fetch a run and its parse summary |
-| GET | `/api/v1/runs/{run_id}/network` | Parsed network, expanded routes and location capacities |
+| GET | `/api/v1/runs/{run_id}/network` | Parsed network, expanded routes, capacities and compiled closure/mirror/interchange spans |
 | POST | `/api/v1/runs/{run_id}/jobs` | Queue a scenario (`{"scenario":"A","time_limit_seconds":300,"seed":42}`); returns `202`, or `409` if that scenario already has an active job |
+| GET | `/api/v1/runs/{run_id}/jobs` | List a run's scenario jobs newest first |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}` | Job lifecycle state and result |
 | POST | `/api/v1/runs/{run_id}/jobs/{job_id}/cancel` | Best-effort cancellation |
-| GET | `/api/v1/runs/{run_id}/jobs/{job_id}/schedule` | Access, occupancy and contract results; `409` until `COMPLETED` |
+| GET | `/api/v1/runs/{run_id}/jobs/{job_id}/schedule` | Access, physical-slot witness, occupancy, results, explanations and internal checks; `409` until `COMPLETED` |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}/report` | Independent validator report and gate; `409` until it exists |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}/export` | Scenario zip; `409` unless `ready_for_submission` |
 | GET | `/healthz` | Unauthenticated liveness check |
 
 Job states: `QUEUED -> RUNNING -> VALIDATING -> COMPLETED | FAILED | TIMED_OUT | CANCELLED`; `INFEASIBLE` is reserved for a solver-proven infeasible model, not congestion.
+
+A completed job returns per-activity deterministic explanations in `ScheduleResponse.explanations` and the internal witness result in `ScheduleResponse.physical_checks`. The solver emits reason codes, the worker persists them on `ScenarioJob.result`, and the schedule endpoint renders them against the stored placements. There is no LLM and no explanation table.
 
 Example upload and solve:
 
@@ -174,12 +188,24 @@ curl -sS -X POST localhost:8000/api/v1/runs/$RUN_ID/jobs \
 
 ## Validator provenance and the missing official validator
 
-The official PS1 validator is **not shipped** in the data pack (only `data/submission-sample/` is). RAO therefore validates in two ways:
+The official PS1 validator is **not shipped** in the data pack (only `data/submission-sample/` is). RAO separates three assurance layers:
 
-1. **Official adapter** (`backend/app/modules/validator/adapter.py`). When `RAO_VALIDATOR_COMMAND` resolves to an executable, the worker writes the instance and submission to temporary directories and runs the command as `<command...> <instance_dir> <submission_dir> <scenario>`, parsing its stdout JSON as a PS1 section 2.7 report. The command is optional and never bundled; the Compose stack mounts `deploy/validator/` read-only at `/opt/validator` in the worker so an operator can drop one in.
-2. **Fallback oracle** (`backend/app/modules/validator/fallback_validator.py`). With no command, it independently re-derives the network, routes, closures and mixes from the CSVs and checks every hard rule. It never reads solver objects, so a plan cannot pass by construction. Reports carry `authority="fallback"` and `validator_source="fallback"`.
+1. **Physical witness check** (`backend/app/modules/validator/witness.py`). It independently inspects the persisted physical slots for simultaneous mix, closure, mirroring, interchange, capacity and workfront conflicts. It proves the generated physical schedule is self-consistent, not that the exported CSV interpretation is official.
+2. **Official adapter** (`backend/app/modules/validator/adapter.py`). When `RAO_VALIDATOR_COMMAND` resolves to an executable, the worker writes the instance and submission to temporary directories and runs the command as `<command...> <instance_dir> <submission_dir> <scenario>`, parsing its stdout JSON as a PS1 section 2.7 report. The command is optional and never bundled; the Compose stack mounts `deploy/validator/` read-only at `/opt/validator` in the worker so an operator can drop one in.
+3. **Fallback oracle** (`backend/app/modules/validator/fallback_validator.py`). With no command, it re-derives the observable submission rules from the CSVs and stays calibrated to the published sample. It never reads solver objects. Reports carry `authority="fallback"` and `validator_source="fallback"`.
 
-The fallback reproduces the published sample: `make sample-validate` must report `feasible`, `workload_complete` and `ready_for_submission` with `authority=fallback`. The adapter never relabels a fallback report as official; a configured validator that exits non-zero or returns non-JSON is reported as a failure. When the official validator becomes available, re-run the same stored submission and compare reports; divergence is a calibration incident handled by the documented policy switches (design doc Section 19). The adapter also honours the legacy `RAIL_VALIDATOR_COMMAND` name when invoked directly, but the worker always passes the `RAO_VALIDATOR_COMMAND` setting.
+The fallback reproduces the published sample: `make sample-validate` must report `feasible`, `workload_complete` and `ready_for_submission` with `authority=fallback`. It cannot uniquely reconstruct every cross-contract physical night from the published fields, so the UI labels fallback-only success `PROVISIONAL`. `OFFICIALLY VALIDATED` is reserved for an official report. The adapter never relabels a fallback report as official.
+
+## Deliverable status
+
+This repository contains the solver, queued API, production web application, hidden-dataset upload flow, control board, deployment packaging and hosted operations runbook. The following submission items remain external:
+
+- The official PS1 validator is absent; only the independent fallback is executable.
+- There is no public hosted URL.
+- Generated A/B/C answer keys are not committed; only `data/submission-sample/` ships.
+- There is no demo video.
+- There is no published GitLab submission URL; the current upstream is GitHub.
+- Bonus features (dynamic replanning, what-if sandbox, natural-language query) are backlog.
 
 ## Data directory
 
@@ -187,6 +213,7 @@ The fallback reproduces the published sample: `make sample-validate` must report
 data/
   public-instance/    Eight input CSVs (01_LINES .. 08_ACTIVITY_DETAILS)
   submission-sample/  Published sample outputs (the acceptance oracle)
+  mapped/             DTL/CCL sandbox generator documentation
   references/         Network diagram
 ```
 
@@ -199,8 +226,12 @@ make test                  # full pytest suite; native CP-SAT tests skip if orto
 make lint                  # ruff check app tests
 make sample-validate       # fallback-validate the published sample (non-zero on failure)
 make test-public-sample    # pytest the public-sample and adapter tests
+make public-answers-smoke  # solve and validate A/B/C with bounded CI budgets
+make public-answers        # generate full public answer directories and archives
 make web-build             # type-check and build the frontend (needs Node)
 ```
+
+`.github/workflows/ci.yml` runs on every push and pull request. The backend job installs the dev and solver extras, runs `ruff check`, the pytest suite, published-sample validation and mandatory A/B/C smoke generation. The frontend job runs `npm ci` and `npm run build`.
 
 ## Team governance
 
