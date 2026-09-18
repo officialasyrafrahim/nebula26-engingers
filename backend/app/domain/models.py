@@ -121,6 +121,7 @@ class ScheduleAccessRow(IdTimestampMixin, Base):
     week: Mapped[int] = mapped_column(Integer)
     eclo: Mapped[bool] = mapped_column(Boolean, default=False)
     access_night: Mapped[int] = mapped_column(Integer)
+    physical_night: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     job: Mapped[ScenarioJob] = relationship(back_populates="access_rows")
 

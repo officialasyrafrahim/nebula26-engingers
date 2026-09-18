@@ -54,6 +54,25 @@ def test_worker_completes_job_with_stubbed_solver(
     assert job["result"]["access_count"] == 1
 
 
+def test_worker_persists_binding_reasons(
+    client, worker_session, minimal_instance_files, fake_solver_result, monkeypatch
+):
+    def with_reasons(compiled, scenario, **kwargs):
+        return fake_solver_result(
+            compiled, scenario, binding_reasons={"A1": ["PLANNED_START"]}
+        )
+
+    monkeypatch.setattr(rail_solver_worker, "solve", with_reasons)
+    run_id = _upload(client, minimal_instance_files).json()["id"]
+    job_id = _submit(client, run_id, "A").json()["id"]
+
+    assert rail_solver_worker.process_next_job() is True
+
+    job = client.get(f"/api/v1/runs/{run_id}/jobs/{job_id}").json()
+    assert job["state"] == JobState.COMPLETED.value
+    assert job["result"]["binding_reasons"] == {"A1": ["PLANNED_START"]}
+
+
 def test_worker_marks_timed_out_when_no_incumbent(
     client, worker_session, minimal_instance_files, fake_solver_result, monkeypatch
 ):

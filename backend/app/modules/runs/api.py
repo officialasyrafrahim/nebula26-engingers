@@ -80,6 +80,13 @@ def create_job(
     return service.create_job(db, run_id, data, actor=user.id)
 
 
+@router.get("/runs/{run_id}/jobs", response_model=list[ScenarioJobRead])
+def list_jobs(run_id: uuid.UUID, db: Session = Depends(get_db)) -> list[ScenarioJobRead]:
+    """List a run's jobs newest first."""
+
+    return service.list_jobs(db, run_id)
+
+
 @router.get("/runs/{run_id}/jobs/{job_id}", response_model=ScenarioJobRead)
 def get_job(
     run_id: uuid.UUID, job_id: uuid.UUID, db: Session = Depends(get_db)

@@ -5,11 +5,12 @@ instance it must pass Scenario A with zero hard violations. Every other test
 takes that validated sample (or a tiny synthetic instance) and breaks exactly one
 rule to prove the independent validator catches it.
 
-Sample-consistent assumption (documented because PS1 is ambiguous, design
-document section 19 A-1/A-2): two accesses are simultaneous iff they share
-``(week, access_night)``; closure conflicts are waived for co-share compatible
-access types. The published sample reuses ``co_share_group`` labels across
-nights, so group identity cannot be the simultaneity key.
+Physical-slot semantics (design A-1/A-2/A-3 and F-COMPILER-002): ``access_night``
+is contract/activity-type-local, so equal local night numbers across contracts
+are never treated as simultaneity. Closure, mix, capacity and co-sharing checks
+consume ``CompiledInstance.physical_possession`` and validate that a consistent
+physical-night assignment exists rather than inventing one. The published sample
+and solver output are the oracles: both must pass with zero hard violations.
 """
 
 from __future__ import annotations
@@ -46,6 +47,7 @@ from app.modules.validator import (
     FORMULA_VERSION,
     OfficialValidatorError,
     infer_scenario,
+    run_calibration,
     validate_bundle,
     validate_compiled,
     validate_directories,
@@ -224,8 +226,13 @@ def _bundle_for(
     *,
     scenario: str = "A",
     group: str = "b1",
+    groups: dict[str, str] | None = None,
 ) -> SubmissionBundle:
-    """Build a bundle for hand-written accesses against a canonical instance."""
+    """Build a bundle for hand-written accesses against a canonical instance.
+
+    ``groups`` overrides the default ``group`` label per activity so fixtures can
+    exercise explicit versus admissible possession grouping.
+    """
 
     compiled = compile_instance(instance)
     access_rows: list[AccessRow] = []
@@ -233,6 +240,7 @@ def _bundle_for(
     for activity_id, entries in accesses.items():
         if not entries:
             continue
+        label = (groups or {}).get(activity_id, group)
         ordered = sorted(entries, key=lambda entry: (entry[0], entry[1]))
         for sequence, (week, night, eclo) in enumerate(ordered, start=1):
             access_rows.append(
@@ -250,7 +258,7 @@ def _bundle_for(
                         activity_id=activity_id,
                         week=week,
                         location_id=location_id,
-                        co_share_group=group,
+                        co_share_group=label,
                     )
                 )
     results: list[ResultRow] = []
@@ -273,6 +281,42 @@ def _bundle_for(
             )
         )
     return build_bundle(scenario, access_rows, occupancy_rows, results)
+
+
+def _compatible_pair_instance(capacities: dict[str, int] | None = None):
+    """One PC contract and one C contract sharing one sector (PC+C legal)."""
+
+    return make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+            },
+            {
+                "contract_number": "C2",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+            },
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C2",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+        capacities=capacities,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -298,8 +342,8 @@ def test_public_sample_scores_match_the_documented_mapping(public_instance, samp
     assert scores.overrun_days_total == 28
     assert scores.contracts_overrunning == 3
     assert scores.priority_overrun == {"1": 0, "2": 0, "3": 28}
-    assert scores.priority_weighted_score == pytest.approx(34.3)
-    assert scores.objective_score == pytest.approx(34.3)
+    assert scores.priority_weighted_score == pytest.approx(48.3)
+    assert scores.objective_score == pytest.approx(48.3)
     assert scores.formula_version == FORMULA_VERSION
     assert scores.excess_access_nights_total == 0
     assert scores.eclo_nights_total == 0
@@ -470,22 +514,60 @@ def test_group_mix_is_checked_across_nights_within_a_week():
     assert "mix" in _rules(report)
 
 
-def test_capacity_is_distinct_groups_per_location_week(public_instance, sample_bundle):
-    saturated = None
-    for row in sample_bundle.occupancy:
-        location = public_instance.locations[row.location_id]
-        groups = {
-            other.co_share_group
-            for other in sample_bundle.occupancy
-            if other.location_id == row.location_id and other.week == row.week
-        }
-        if location.supply_capacity == 1 and len(groups) == 1:
-            saturated = row
-            break
-    assert saturated is not None
-    extra = saturated.model_copy(update={"co_share_group": "zz"})
-    mutated = _replace(sample_bundle, occupancy=sample_bundle.occupancy + (extra,))
-    report = validate_bundle(public_instance, mutated)
+def test_separate_compatible_groups_exceed_capacity():
+    """Two declared possessions at one location-week exceed a supply of one."""
+
+    instance = _compatible_pair_instance(capacities={SECTOR: 1})
+    # Each group is a legal PC+C possession, but they are two possessions.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert "capacity" in _rules(report)
+    assert report.soft_scores.excess_access_nights_total == 1
+
+
+def test_capacity_exceeds_supply_when_two_possessions_are_required():
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+            },
+            {
+                "contract_number": "C2",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+            },
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C2",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+        capacities={SECTOR: 1},
+    )
+    # Two PC possessions cannot share one location-night or one supply slot.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
     assert "capacity" in _rules(report)
 
 
@@ -521,7 +603,9 @@ def test_workfront_cap_is_per_contract_type_night():
     assert "workfront" in _rules(report)
 
 
-def test_closure_conflict_between_incompatible_types():
+def test_cross_contract_same_local_night_is_not_a_closure_conflict():
+    """Equal local night numbers in different contracts are unrelated slots."""
+
     instance = make_planning(
         [
             {
@@ -531,7 +615,7 @@ def test_closure_conflict_between_incompatible_types():
             },
             {
                 "contract_number": "C2",
-                "access_type": "PC",
+                "access_type": "PM",
                 "nature_of_activity": "Non-live (Others)",
             },
         ],
@@ -552,16 +636,309 @@ def test_closure_conflict_between_incompatible_types():
             },
         ],
     )
-    bundle = _bundle_for(instance, {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]})
+    # Different explicit groups: the two possessions can be placed on separate
+    # physical nights even though their local night index is the same.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+    assert _rules(report) == set()
+
+
+def test_forced_same_contract_conflict_is_detected():
+    """Same contract/type/week/night is one physical night: conflict is forced."""
+
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+    )
+    # Different groups force separate possessions, but the shared local night
+    # forces one physical slot: the pair is both together and apart.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert {"mix", "closure"} <= _rules(report)
+
+
+def _pm_crowd(count: int):
+    contracts = [
+        {
+            "contract_number": f"C{index}",
+            "access_type": "PM",
+            "nature_of_activity": "Non-live (Others)",
+        }
+        for index in range(1, count + 1)
+    ]
+    activities = [
+        {
+            "activity_id": f"A{index}",
+            "contract_number": f"C{index}",
+            "start_location_id": SECTOR,
+            "end_location_id": SECTOR,
+            "total_accesses": 1,
+        }
+        for index in range(1, count + 1)
+    ]
+    return contracts, activities
+
+
+_SECTOR_ROUTE_LOCATIONS = (
+    "PLAT:ALP:S01:EB",
+    "PLAT:ALP:S02:EB",
+    SECTOR,
+)
+
+
+def test_seven_incompatible_possessions_fit_the_seven_night_week():
+    contracts, activities = _pm_crowd(7)
+    capacities = {location: 7 for location in _SECTOR_ROUTE_LOCATIONS}
+    instance = make_planning(contracts, activities, capacities=capacities)
+    bundle = _bundle_for(
+        instance,
+        {f"A{index}": [(1, 1, 0)] for index in range(1, 8)},
+        groups={f"A{index}": f"b{index}" for index in range(1, 8)},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+
+
+def test_eight_incompatible_possessions_exceed_the_seven_night_week():
+    contracts, activities = _pm_crowd(8)
+    capacities = {location: 8 for location in _SECTOR_ROUTE_LOCATIONS}
+    instance = make_planning(contracts, activities, capacities=capacities)
+    bundle = _bundle_for(
+        instance,
+        {f"A{index}": [(1, 1, 0)] for index in range(1, 9)},
+        groups={f"A{index}": f"b{index}" for index in range(1, 9)},
+    )
     report = validate_bundle(instance, bundle, "A")
     assert "closure" in _rules(report)
 
 
-def test_live_mirroring_conflict_is_tagged_mirror():
+def test_same_contract_different_nights_can_be_separated():
+    """The same conflict is admissible when the two accesses use different nights."""
+
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+    )
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 2, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+
+
+def test_same_group_waives_a_compatible_closure_conflict():
+    """Same submitted group at a common occupied location is one possession."""
+
+    instance = _compatible_pair_instance()
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b1"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+    assert _rules(report) == set()
+
+
+def test_forced_same_local_class_closure_conflict():
+    """Same local-night class plus different groups at a shared occupied spot."""
+
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+    )
+    # Same contract/type/week/night forces one slot; the two groups are separate
+    # possessions at the shared occupied location, so the closure is forced.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert "closure" in _rules(report)
+
+
+def test_same_group_same_night_is_one_physical_slot():
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+    )
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b1"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+
+
+def test_two_pc_plus_c_in_one_group_is_an_illegal_mix():
+    instance = make_planning(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+            },
+            {
+                "contract_number": "C2",
+                "access_type": "PC",
+                "nature_of_activity": "Non-live (Others)",
+            },
+            {
+                "contract_number": "C3",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Others)",
+            },
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C2",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A3",
+                "contract_number": "C3",
+                "start_location_id": SECTOR,
+                "end_location_id": SECTOR,
+                "total_accesses": 1,
+            },
+        ],
+    )
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)], "A3": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b1", "A3": "b1"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert "mix" in _rules(report)
+
+
+def test_buffer_only_pair_without_a_common_group_is_admitted():
+    """Buffer-only overlap cannot be proven from the contract-local night schema.
+
+    The sample-calibrated fallback enforces closure separation only at a shared
+    occupied location, so two activities whose routes are disjoint and that do
+    not share a group are not falsely rejected.
+    """
+
     instance = _single_line_instance(
         [
-            {"contract_number": "C1", "access_type": "PC", "nature_of_activity": "Live"},
-            {"contract_number": "C2", "access_type": "PC", "nature_of_activity": "Live"},
+            {
+                "contract_number": "C1",
+                "access_type": "C",
+                "nature_of_activity": "Non-live (Consist)",
+                "number_of_workfronts": 2,
+            }
         ],
         [
             {
@@ -573,14 +950,58 @@ def test_live_mirroring_conflict_is_tagged_mirror():
             },
             {
                 "activity_id": "A2",
-                "contract_number": "C2",
-                "start_location_id": "SEC:ALP:S01_S02:WB",
-                "end_location_id": "SEC:ALP:S01_S02:WB",
+                "contract_number": "C1",
+                "start_location_id": "SEC:ALP:S03_S04:EB",
+                "end_location_id": "SEC:ALP:S03_S04:EB",
                 "total_accesses": 1,
             },
         ],
     )
-    bundle = _bundle_for(instance, {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]})
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
+    report = validate_bundle(instance, bundle, "A")
+    assert report.feasible is True
+    assert "closure" not in _rules(report)
+
+
+def test_live_mirroring_conflict_is_tagged_mirror():
+    """Same contract, same night, shared occupied sector: Live mirrors conflict."""
+
+    instance = _single_line_instance(
+        [
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Live",
+                "number_of_workfronts": 2,
+            }
+        ],
+        [
+            {
+                "activity_id": "A1",
+                "contract_number": "C1",
+                "start_location_id": "SEC:ALP:S01_S02:EB",
+                "end_location_id": "SEC:ALP:S01_S02:EB",
+                "total_accesses": 1,
+            },
+            {
+                "activity_id": "A2",
+                "contract_number": "C1",
+                "start_location_id": "SEC:ALP:S01_S02:EB",
+                "end_location_id": "SEC:ALP:S01_S02:EB",
+                "total_accesses": 1,
+            },
+        ],
+    )
+    # Different groups at the shared occupied sector: the closure is not waived.
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
     report = validate_bundle(instance, bundle, "A")
     assert "mirror" in _rules(report)
 
@@ -588,8 +1009,12 @@ def test_live_mirroring_conflict_is_tagged_mirror():
 def test_live_interchange_conflict_is_tagged_interchange():
     instance = make_planning(
         [
-            {"contract_number": "C1", "access_type": "PC", "nature_of_activity": "Live"},
-            {"contract_number": "C2", "access_type": "PC", "nature_of_activity": "Live"},
+            {
+                "contract_number": "C1",
+                "access_type": "PC",
+                "nature_of_activity": "Live",
+                "number_of_workfronts": 2,
+            }
         ],
         [
             {
@@ -601,14 +1026,18 @@ def test_live_interchange_conflict_is_tagged_interchange():
             },
             {
                 "activity_id": "A2",
-                "contract_number": "C2",
-                "start_location_id": "SEC:BET:H01_H02:WB",
-                "end_location_id": "SEC:BET:H01_H02:WB",
+                "contract_number": "C1",
+                "start_location_id": "SEC:ALP:H01_H02:EB",
+                "end_location_id": "SEC:ALP:H01_H02:EB",
                 "total_accesses": 1,
             },
         ],
     )
-    bundle = _bundle_for(instance, {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]})
+    bundle = _bundle_for(
+        instance,
+        {"A1": [(1, 1, 0)], "A2": [(1, 1, 0)]},
+        groups={"A1": "b1", "A2": "b2"},
+    )
     report = validate_bundle(instance, bundle, "A")
     assert "interchange" in _rules(report)
 
@@ -777,6 +1206,47 @@ def test_adapter_raises_when_official_output_is_not_json(tmp_path):
         validate_with_adapter(
             PUBLIC_INSTANCE_DIR, SUBMISSION_SAMPLE_DIR, command=command
         )
+
+
+# ---------------------------------------------------------------------------
+# Official calibration hooks (F-VALIDATOR-004 scaffolding)
+# ---------------------------------------------------------------------------
+
+
+def test_calibration_is_blocked_without_a_command(monkeypatch):
+    monkeypatch.delenv(VALIDATOR_COMMAND_ENV, raising=False)
+    result = run_calibration(PUBLIC_INSTANCE_DIR, SUBMISSION_SAMPLE_DIR)
+    assert result.status == "blocked"
+    assert result.official_available is False
+    assert result.official is None
+    assert result.official_command is None
+    assert result.fallback is not None
+    assert result.fallback.authority == "fallback"
+
+
+def test_calibration_matches_the_echoed_official_report(tmp_path):
+    fallback = validate_directories(PUBLIC_INSTANCE_DIR, SUBMISSION_SAMPLE_DIR)
+    payload = fallback.model_dump(mode="json")
+    command = _write_validator_script(tmp_path, stdout=json.dumps(payload))
+    result = run_calibration(
+        PUBLIC_INSTANCE_DIR, SUBMISSION_SAMPLE_DIR, command=command
+    )
+    assert result.status == "match"
+    assert result.official_available is True
+    assert result.official is not None
+    assert result.official.authority == "official"
+    assert result.divergences == ()
+
+
+def test_calibration_detects_a_divergent_official_report(tmp_path):
+    command = _write_validator_script(tmp_path)
+    result = run_calibration(
+        PUBLIC_INSTANCE_DIR, SUBMISSION_SAMPLE_DIR, command=command
+    )
+    assert result.status == "diverged"
+    assert result.official is not None
+    assert result.official.authority == "official"
+    assert result.divergences
 
 
 # ---------------------------------------------------------------------------

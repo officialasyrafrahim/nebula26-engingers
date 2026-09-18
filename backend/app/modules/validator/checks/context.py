@@ -35,8 +35,6 @@ class ValidationContext:
     occupancy_groups: dict[tuple[str, int], set[str]] = field(default_factory=dict)
     group_activities: dict[tuple[str, int, str], set[str]] = field(default_factory=dict)
     groups_at_location_week: dict[tuple[str, int], set[str]] = field(default_factory=dict)
-    activity_week_night: dict[tuple[str, int], int] = field(default_factory=dict)
-    present_at_night: dict[tuple[int, int], set[str]] = field(default_factory=dict)
     capacity_excess: dict[tuple[str, int], int] = field(default_factory=dict)
     capacity_hotspots: list[dict[str, object]] = field(default_factory=list)
     excess_access_nights_total: int = 0
@@ -71,11 +69,6 @@ class ValidationContext:
         for row in access:
             key = (row.activity_id, row.week)
             self.access_row_at.setdefault(key, row)
-            self.activity_week_night[key] = row.access_night
-            if row.activity_id in self.compiled.activities:
-                self.present_at_night.setdefault((row.week, row.access_night), set()).add(
-                    row.activity_id
-                )
 
         for row in occupancy:
             key = (row.activity_id, row.week)

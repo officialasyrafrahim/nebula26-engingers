@@ -23,7 +23,7 @@ from app.domain.models import (
     utcnow,
 )
 from app.domain.rail.errors import Issue, RailDataError
-from app.domain.schemas import ScenarioJobCreate
+from app.domain.schemas import ActivityExplanation, ActivitySpanRead, ScenarioJobCreate
 from app.modules.compiler import compile_instance, expand_all_routes
 from app.modules.export import (
     AccessRow,
@@ -202,6 +202,15 @@ def get_network(db: Session, run_id) -> dict:
             for activity_id, route in routes.items()
         },
         "location_capacities": dict(compiled.location_capacities),
+        "activity_spans": {
+            activity_id: ActivitySpanRead(
+                occupied_locations=list(activity.occupied_locations),
+                closure_locations=list(activity.closure_locations),
+                mirrored_locations=list(activity.mirrored_locations),
+                interchange_locations=list(activity.interchange_locations),
+            )
+            for activity_id, activity in sorted(compiled.activities.items())
+        },
     }
 
 
@@ -272,6 +281,23 @@ def get_job(db: Session, run_id, job_id) -> ScenarioJob:
     return job
 
 
+def list_jobs(db: Session, run_id) -> list[ScenarioJob]:
+    """List a run's jobs newest first, scoped to the run."""
+
+    run = get_run(db, run_id)
+    return list(
+        db.scalars(
+            select(ScenarioJob)
+            .where(ScenarioJob.run_id == run.id)
+            .order_by(
+                ScenarioJob.submitted_at.desc(),
+                ScenarioJob.created_at.desc(),
+                ScenarioJob.id.desc(),
+            )
+        ).all()
+    )
+
+
 def cancel_job(db: Session, run_id, job_id, *, actor: str | None = None) -> ScenarioJob:
     """Best-effort cancellation of a queued or running job."""
 
@@ -294,6 +320,214 @@ def cancel_job(db: Session, run_id, job_id, *, actor: str | None = None) -> Scen
     db.commit()
     db.refresh(job)
     return job
+
+
+def _explanation_summary(
+    activity_id: str,
+    codes: list[str],
+    first_week: int,
+    planned_start_week: int | None,
+    predecessor_activity_id: str | None,
+    predecessor_last_week: int | None,
+    horizon_weeks: int,
+) -> str:
+    """Render deterministic prose from the persisted evidence only."""
+
+    parts = [f"first access week {first_week}"]
+    if planned_start_week is not None:
+        parts.append(f"planned start week {planned_start_week}")
+    if first_week > horizon_weeks:
+        parts.append(f"beyond nominal horizon of {horizon_weeks} weeks")
+    if (
+        "PREDECESSOR" in codes
+        and predecessor_activity_id is not None
+        and predecessor_last_week is not None
+    ):
+        parts.append(
+            f"predecessor {predecessor_activity_id} last access week "
+            f"{predecessor_last_week}"
+        )
+    if "PLANNED_START" in codes:
+        parts.append("bounded by planned start")
+    if "ECLO_WINDOW" in codes:
+        parts.append("ECLO kept within the scenario window")
+    if "BUFFER_CLOSURE" in codes:
+        parts.append("bounded by a closure buffer")
+    if "LIVE_MIRROR" in codes:
+        parts.append("Live working mirrored onto the opposite bound")
+    if "INTERCHANGE" in codes:
+        parts.append("reached the H01-H02 interchange")
+    if "POSSESSION_MIX" in codes:
+        parts.append("packed under possession-mix rules")
+    if "CO_SHARE_PACKED" in codes:
+        parts.append("packed into a co-shared possession")
+    if "CAPACITY" in codes:
+        parts.append("used a location at its capacity limit")
+    if "WEEKLY_CAP" in codes:
+        parts.append("used the contract weekly access limit")
+    if "WORKFRONT" in codes:
+        parts.append("used the contract workfront limit")
+    if "PRIORITY_OVERRUN" in codes:
+        parts.append("contributed to priority-weighted overrun")
+    return f"{activity_id} " + "; ".join(parts) + "."
+
+
+def _activity_evidence(
+    codes: list[str],
+    activity,
+    occupancy_rows: list,
+    group_members: dict[tuple[str, int, str], set[str]],
+    groups_at_location_week: dict[tuple[str, int], set[str]],
+    compiled,
+) -> dict[str, object]:
+    """Structural facts the reason codes justify, or nothing when unproven.
+
+    Every value is derived from persisted schedule rows and the recompiled
+    instance. Codes with no derivable fact add no keys, so the panel degrades to
+    the bare reason code instead of inventing a cause.
+    """
+
+    evidence: dict[str, object] = {}
+    if activity is not None and (
+        "POSSESSION_MIX" in codes or "CO_SHARE_PACKED" in codes
+    ):
+        evidence["access_type"] = activity.access_type
+
+    if "CAPACITY" in codes and occupancy_rows:
+        at_limit = []
+        for location_id, week, _ in sorted(
+            {(row.location_id, row.week, row.co_share_group) for row in occupancy_rows}
+        ):
+            used = len(groups_at_location_week.get((location_id, week), ()))
+            capacity = compiled.location_capacities.get(location_id, 0)
+            if capacity and used >= capacity:
+                at_limit.append((location_id, week, used, capacity))
+        if at_limit:
+            location_id, week, used, capacity = at_limit[0]
+            evidence["capacity_location"] = location_id
+            evidence["capacity_week"] = week
+            evidence["capacity_used"] = used
+            evidence["capacity_limit"] = capacity
+
+    if "CO_SHARE_PACKED" in codes:
+        shared: list[tuple[str, tuple[str, ...]]] = []
+        for row in occupancy_rows:
+            key = (row.location_id, row.week, row.co_share_group)
+            members = group_members.get(key, set())
+            if len(members) > 1:
+                shared.append((row.co_share_group, tuple(sorted(members))))
+        if shared:
+            group, members = sorted(shared)[0]
+            evidence["co_share_group"] = group
+            evidence["co_share_partners"] = list(members)
+            evidence["co_share_size"] = len(members)
+
+    if "POSSESSION_MIX" in codes and occupancy_rows:
+        groups = sorted(
+            {row.co_share_group for row in occupancy_rows if row.co_share_group}
+        )
+        if groups:
+            evidence["mix_groups"] = groups
+
+    if activity is not None:
+        if "BUFFER_CLOSURE" in codes:
+            evidence["buffer_sectors"] = activity.buffer_sectors
+            evidence["closure_location_count"] = len(activity.closure_locations)
+        if "LIVE_MIRROR" in codes:
+            evidence["opposite_bound_required"] = activity.opposite_bound_required
+            evidence["mirrored_location_count"] = len(activity.mirrored_locations)
+        if "INTERCHANGE" in codes:
+            evidence["interchange_location_count"] = len(activity.interchange_locations)
+
+    return evidence
+
+
+def _build_explanations(
+    db: Session, job: ScenarioJob, access, occupancy
+) -> list[ActivityExplanation]:
+    """Derive per-activity explanations from persisted evidence, no new table.
+
+    Reason codes are copied verbatim from ``job.result["binding_reasons"]``.
+    Evidence is rebuilt from the persisted access and occupancy rows plus the
+    recompiled instance, so it survives a worker restart and never invents a
+    fact the schedule cannot support.
+    """
+
+    result = job.result or {}
+    reasons_by_activity = result.get("binding_reasons") or {}
+    access_by_activity: dict[str, list] = {}
+    for row in access:
+        access_by_activity.setdefault(row.activity_id, []).append(row)
+
+    occupancy_by_activity: dict[str, list] = {}
+    group_members: dict[tuple[str, int, str], set[str]] = {}
+    groups_at_location_week: dict[tuple[str, int], set[str]] = {}
+    for row in occupancy:
+        occupancy_by_activity.setdefault(row.activity_id, []).append(row)
+        group_members.setdefault(
+            (row.location_id, row.week, row.co_share_group), set()
+        ).add(row.activity_id)
+        groups_at_location_week.setdefault((row.location_id, row.week), set()).add(
+            row.co_share_group
+        )
+
+    if not access_by_activity:
+        return []
+
+    run = db.get(PlanningRun, job.run_id)
+    if run is None:
+        return []
+    compiled = compile_instance(instance_for_run(run))
+    horizon_weeks = compiled.instance.horizon_weeks
+
+    explanations: list[ActivityExplanation] = []
+    for activity_id in sorted(access_by_activity):
+        weeks = sorted(row.week for row in access_by_activity[activity_id])
+        first_week = weeks[0]
+        activity = compiled.activities.get(activity_id)
+        predecessor_id = activity.predecessor_activity_id if activity else None
+        predecessor_last_week = None
+        if predecessor_id is not None:
+            predecessor_rows = access_by_activity.get(predecessor_id)
+            if predecessor_rows:
+                predecessor_last_week = max(row.week for row in predecessor_rows)
+        planned_start_week = max(1, activity.planned_start_week) if activity else None
+        codes = sorted(set(reasons_by_activity.get(activity_id, [])))
+        evidence: dict[str, object] = {
+            "first_week": first_week,
+            "planned_start_week": planned_start_week,
+            "predecessor_activity_id": predecessor_id,
+            "predecessor_last_week": predecessor_last_week,
+            "horizon_weeks": horizon_weeks,
+            "horizon_extended": first_week > horizon_weeks,
+        }
+        evidence.update(
+            _activity_evidence(
+                codes,
+                activity,
+                occupancy_by_activity.get(activity_id, []),
+                group_members,
+                groups_at_location_week,
+                compiled,
+            )
+        )
+        explanations.append(
+            ActivityExplanation(
+                activity_id=activity_id,
+                reason_codes=codes,
+                summary=_explanation_summary(
+                    activity_id,
+                    codes,
+                    first_week,
+                    planned_start_week,
+                    predecessor_id,
+                    predecessor_last_week,
+                    horizon_weeks,
+                ),
+                evidence=evidence,
+            )
+        )
+    return explanations
 
 
 def get_schedule(db: Session, run_id, job_id) -> dict:
@@ -330,6 +564,7 @@ def get_schedule(db: Session, run_id, job_id) -> dict:
             .order_by(ContractResultRow.contract_number)
         ).all()
     )
+    physical_checks = (job.result or {}).get("physical_checks")
     return {
         "run_id": job.run_id,
         "job_id": job.id,
@@ -337,6 +572,8 @@ def get_schedule(db: Session, run_id, job_id) -> dict:
         "access": access,
         "occupancy": occupancy,
         "results": results,
+        "explanations": _build_explanations(db, job, access, occupancy),
+        "physical_checks": physical_checks,
     }
 
 
@@ -419,5 +656,6 @@ __all__ = [
     "get_run",
     "get_schedule",
     "instance_for_run",
+    "list_jobs",
     "list_runs",
 ]

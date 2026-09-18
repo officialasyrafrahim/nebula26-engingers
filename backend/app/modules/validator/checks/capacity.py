@@ -1,10 +1,14 @@
 """Location-week capacity from the published supply (rule ``capacity``).
 
-Capacity is counted as the number of distinct ``co_share_group`` values at a
-``(location, week)``. The hard ceiling follows the scenario policy: Scenario A
-allows exactly ``supply_capacity``; Scenario C allows one extra possession
-before hard-failing (the soft-scored elasticity); Scenario B is unbounded and
-only contributes to the excess score.
+Capacity counts the **submitted possessions**: the distinct ``co_share_group``
+values declared at each ``(location_id, week)``. Each submitted group is one
+possession on one access-night slot (PS1 rules 5 and 6), so the declared labels
+are authoritative and are never replaced by a theoretical minimum packing.
+
+The hard ceiling follows the scenario policy: Scenario A allows exactly
+``supply_capacity``; Scenario C allows one extra possession before hard-failing
+(the soft-scored elasticity); Scenario B is unbounded and only contributes to
+the excess score.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ def check(ctx: ValidationContext) -> None:
         if limit is not None and used > limit:
             ctx.add(
                 "capacity",
-                f"week {week} {location_id}: {used} possessions exceed the "
+                f"week {week} {location_id}: {used} submitted possessions exceed the "
                 f"{ctx.scenario}-scenario limit {limit} (supply {capacity})",
             )
 

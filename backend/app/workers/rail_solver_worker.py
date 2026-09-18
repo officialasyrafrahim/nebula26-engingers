@@ -31,7 +31,7 @@ from app.domain.models import (
     utcnow,
 )
 from app.domain.rail.errors import RailDataError
-from app.modules.compiler import compile_instance
+from app.modules.compiler import compile_instance, get_policy
 from app.modules.export import (
     SubmissionBundle,
     bundle_from_solver_result,
@@ -41,7 +41,9 @@ from app.modules.instance import INSTANCE_FILES, parse_mapping
 from app.modules.instance.service import build_planning_instance
 from app.modules.solver import OrToolsUnavailableError, solve
 from app.modules.validator import (
+    PhysicalWitnessReport,
     ValidatorReport,
+    check_physical_witness,
     validate_compiled,
     validate_with_adapter,
 )
@@ -99,6 +101,7 @@ def _persist_success(
     job: ScenarioJob,
     solver_result,
     report: ValidatorReport,
+    physical_checks: PhysicalWitnessReport,
 ) -> None:
     """Persist placements, contract results and report in one transaction."""
 
@@ -123,6 +126,7 @@ def _persist_success(
             week=row.week,
             eclo=bool(row.eclo),
             access_night=row.access_night,
+            physical_night=row.physical_night,
         )
         for row in solver_result.access
     )
@@ -168,6 +172,8 @@ def _persist_success(
         "contract_count": len(solver_result.contract_results),
         "authority": report.authority,
         "ready_for_submission": report.ready_for_submission,
+        "binding_reasons": solver_result.binding_reasons,
+        "physical_checks": physical_checks.model_dump(mode="json"),
     }
     job.error = None
     job.finished_at = utcnow()
@@ -258,7 +264,13 @@ def process_next_job(timeout: float | None = 1.0) -> bool:
             _set_terminal(session, job_id, JobState.CANCELLED)
             return True
 
-        _persist_success(session, job, solver_result, report)
+        physical_checks = check_physical_witness(
+            compiled,
+            get_policy(job.scenario.value),
+            solver_result.access,
+            solver_result.occupancy,
+        )
+        _persist_success(session, job, solver_result, report, physical_checks)
         return True
     finally:
         session.close()

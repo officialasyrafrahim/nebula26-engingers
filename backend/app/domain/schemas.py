@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import JobState, Scenario
+from app.modules.validator.witness import PhysicalWitnessReport
 
 
 class ReadModel(BaseModel):
@@ -43,6 +44,21 @@ class PlanningRunRead(ReadModel):
     created_at: datetime
 
 
+class ActivitySpanRead(BaseModel):
+    """Compiled physical spans for one activity on a run.
+
+    Additive control-board contract. Values are compiled from the same instance
+    the solver consumes, so consumers never re-derive closure logic.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    occupied_locations: list[str] = Field(default_factory=list)
+    closure_locations: list[str] = Field(default_factory=list)
+    mirrored_locations: list[str] = Field(default_factory=list)
+    interchange_locations: list[str] = Field(default_factory=list)
+
+
 class NetworkResponse(BaseModel):
     """The parsed rail network and expanded routes for one run."""
 
@@ -56,6 +72,7 @@ class NetworkResponse(BaseModel):
     activities: list[dict]
     routes: dict[str, list[str]]
     location_capacities: dict[str, int]
+    activity_spans: dict[str, ActivitySpanRead] = Field(default_factory=dict)
 
 
 class ScenarioJobCreate(BaseModel):
@@ -63,7 +80,7 @@ class ScenarioJobCreate(BaseModel):
 
     scenario: Scenario
     time_limit_seconds: int | None = Field(default=None, gt=0)
-    seed: int | None = None
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
 
 
 class ScenarioJobRead(ReadModel):
@@ -94,6 +111,7 @@ class ScheduleAccessRead(ReadModel):
     week: int
     eclo: bool
     access_night: int
+    physical_night: int | None = None
 
 
 class ScheduleOccupancyRead(ReadModel):
@@ -115,6 +133,20 @@ class ContractResultRead(ReadModel):
     overrun_days: int
 
 
+class ActivityExplanation(BaseModel):
+    """Deterministic explanation for one activity's first access placement.
+
+    Reason codes are copied from the solver evidence persisted on the job. The
+    evidence mapping is recomputed from the persisted schedule and the
+    recompiled instance so the explanation survives a process reload.
+    """
+
+    activity_id: str
+    reason_codes: list[str] = Field(default_factory=list)
+    summary: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
 class ScheduleResponse(BaseModel):
     """The schedule, occupancy and contract results of a completed job."""
 
@@ -124,6 +156,8 @@ class ScheduleResponse(BaseModel):
     access: list[ScheduleAccessRead]
     occupancy: list[ScheduleOccupancyRead]
     results: list[ContractResultRead]
+    explanations: list[ActivityExplanation] = Field(default_factory=list)
+    physical_checks: PhysicalWitnessReport | None = None
 
 
 class ValidatorReportRead(ReadModel):
@@ -141,6 +175,8 @@ class ValidatorReportRead(ReadModel):
 
 
 __all__ = [
+    "ActivityExplanation",
+    "ActivitySpanRead",
     "ContractResultRead",
     "NetworkResponse",
     "ParseSummary",

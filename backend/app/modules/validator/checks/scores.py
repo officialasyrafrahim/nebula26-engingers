@@ -1,11 +1,8 @@
-"""Soft-score computation for the PS1 section 2.7 report.
-
-Scores are penalties (lower is better). The overrun is contract-level, so the
-activity-priority nudge uses the contract's highest-priority activity, matching
-the solver and the design document's ambiguity note A-7.
-"""
+"""Soft-score computation for the PS1 section 2.7 report."""
 
 from __future__ import annotations
+
+from datetime import timedelta
 
 from app.modules.compiler.policy import (
     ECLO_NIGHT_COST,
@@ -16,24 +13,7 @@ from app.modules.validator.checks.context import ValidationContext
 from app.modules.validator.report import FORMULA_VERSION, SoftScores, ValidatorDetail
 
 
-def _contract_weights(ctx: ValidationContext) -> dict[str, float]:
-    weights: dict[str, float] = {}
-    for contract_number, contract in ctx.instance.contracts.items():
-        priorities = [
-            activity.activity_priority
-            for activity in ctx.instance.activities.values()
-            if activity.contract_number == contract_number
-        ]
-        if not priorities:
-            continue
-        weights[contract_number] = contract_overrun_weight(
-            contract.contract_priority, min(priorities)
-        )
-    return weights
-
-
 def compute_soft_scores(ctx: ValidationContext, *, feasible: bool) -> SoftScores:
-    weights = _contract_weights(ctx)
     priority_overrun: dict[str, int] = {"1": 0, "2": 0, "3": 0}
     overrun_total = 0
     earliness_total = 0
@@ -50,10 +30,24 @@ def compute_soft_scores(ctx: ValidationContext, *, feasible: bool) -> SoftScores
         priority_overrun[str(contract.contract_priority)] = (
             priority_overrun.get(str(contract.contract_priority), 0) + row.overrun_days
         )
-        weighted += weights.get(row.contract_number, 0.0) * row.overrun_days
         earliness_total += max(
             0, (contract.planned_completion_date - row.simulated_completion_date).days
         )
+
+    for activity_id, rows in ctx.access_by_activity.items():
+        activity = ctx.instance.activities.get(activity_id)
+        if activity is None or not rows:
+            continue
+        contract = ctx.instance.contracts[activity.contract_number]
+        completion = ctx.instance.horizon_start + timedelta(
+            days=(max(row.week for row in rows) - 1) * 7 + 6
+        )
+        activity_overrun = max(
+            0, (completion - contract.planned_completion_date).days
+        )
+        weighted += contract_overrun_weight(
+            contract.contract_priority, activity.activity_priority
+        ) * activity_overrun
 
     eclo_nights = sum(1 for row in _all_access(ctx) if row.eclo)
     excess = ctx.excess_access_nights_total

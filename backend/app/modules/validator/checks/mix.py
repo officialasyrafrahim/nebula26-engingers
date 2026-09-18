@@ -5,8 +5,10 @@ most four ``C``. The check runs at two granularities that must both hold:
 
 * per ``(location, week, co_share_group)`` the labelled possession is a legal
   mix and every pair in it is co-share compatible;
-* per ``(location, week, access_night)`` the simultaneous occupants form a
-  legal mix, so incompatible work cannot hide behind different group labels.
+* per ``(location, week, contract, activity_type, access_night)`` the activities
+  forced onto one physical night by the local night namespace form a legal mix.
+  ``access_night`` is contract/type-local, so two different contracts' night 1
+  values are unrelated and are never combined here.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from app.modules.validator.checks.context import ValidationContext
 
 def check(ctx: ValidationContext) -> None:
     _check_groups(ctx)
-    _check_night_mixes(ctx)
+    _check_night_classes(ctx)
 
 
 def _check_groups(ctx: ValidationContext) -> None:
@@ -48,23 +50,31 @@ def _check_groups(ctx: ValidationContext) -> None:
                     )
 
 
-def _check_night_mixes(ctx: ValidationContext) -> None:
-    occupants: dict[tuple[str, int, int], set[str]] = defaultdict(set)
-    for (week, night), activities in ctx.present_at_night.items():
-        for activity_id in activities:
-            if activity_id not in ctx.known_activities:
-                continue
-            for location_id in ctx.activity(activity_id).occupied_locations:
-                occupants[(location_id, week, night)].add(activity_id)
+def _check_night_classes(ctx: ValidationContext) -> None:
+    occupants: dict[tuple[str, int, str, str, int], set[str]] = defaultdict(set)
+    for (activity_id, week), locations in sorted(ctx.occupancy_locations.items()):
+        if activity_id not in ctx.known_activities:
+            continue
+        access = ctx.access_row_at.get((activity_id, week))
+        if access is None:
+            continue
+        contract = ctx.instance.contracts[ctx.activity(activity_id).contract_number]
+        night = access.access_night
+        for location_id in locations:
+            occupants[
+                (location_id, week, contract.contract_number, contract.activity_type, night)
+            ].add(activity_id)
 
-    for (location_id, week, night), activities in sorted(occupants.items()):
+    for key, activities in sorted(occupants.items()):
+        location_id, week, contract_number, activity_type, night = key
         known = sorted(activities)
         types = [ctx.activity(activity_id).access_type for activity_id in known]
         if not legal_access_mix(types):
             ctx.add(
                 "mix",
                 f"week {week} night {night} {location_id}: illegal simultaneous mix "
-                f"{sorted(types)} from {known}",
+                f"{sorted(types)} from {known} "
+                f"(contract {contract_number}/{activity_type})",
             )
 
 
