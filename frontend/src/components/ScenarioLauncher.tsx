@@ -12,7 +12,11 @@ interface ScenarioLauncherProps {
   launching: Scenario | null;
   jobs: ScenarioJob[];
   selectedJobId: string | null;
-  onLaunch: (scenario: Scenario, timeLimitSeconds?: number) => Promise<void>;
+  onLaunch: (
+    scenario: Scenario,
+    timeLimitSeconds?: number,
+    seed?: number,
+  ) => Promise<void>;
   onInspectJob: (job: ScenarioJob) => void;
 }
 
@@ -44,6 +48,7 @@ export default function ScenarioLauncher({
 }: ScenarioLauncherProps) {
   const [selected, setSelected] = useState<Scenario>("A");
   const [timeLimit, setTimeLimit] = useState("");
+  const [seed, setSeed] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const launch = async () => {
@@ -51,13 +56,25 @@ export default function ScenarioLauncher({
     let parsed: number | undefined;
     if (timeLimit.trim() !== "") {
       parsed = Number(timeLimit);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        setError("Time limit must be a positive number of seconds.");
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        setError("Time limit must be a positive whole number of seconds.");
+        return;
+      }
+    }
+    let parsedSeed: number | undefined;
+    if (seed.trim() !== "") {
+      parsedSeed = Number(seed);
+      if (
+        !Number.isInteger(parsedSeed) ||
+        parsedSeed < 0 ||
+        parsedSeed > 2_147_483_647
+      ) {
+        setError("Seed must be an integer from 0 to 2147483647.");
         return;
       }
     }
     try {
-      await onLaunch(selected, parsed);
+      await onLaunch(selected, parsed, parsedSeed);
     } catch (caught) {
       setError(
         caught instanceof ApiError
@@ -166,6 +183,25 @@ export default function ScenarioLauncher({
           <p className="field__hint">
             Leave blank to use the configured solver default. Solve work is queued
             and never blocks the API.
+          </p>
+        </div>
+        <div className="field">
+          <label htmlFor="solver-seed">Solver seed (optional)</label>
+          <input
+            id="solver-seed"
+            type="number"
+            min={0}
+            max={2147483647}
+            step={1}
+            inputMode="numeric"
+            placeholder="server default"
+            value={seed}
+            onChange={(event) => setSeed(event.target.value)}
+            disabled={disabled}
+          />
+          <p className="field__hint">
+            Pin the random seed to reproduce a schedule. Leave blank for the
+            server default.
           </p>
         </div>
         <button

@@ -137,6 +137,13 @@ export interface Activity {
   activity_priority: number;
 }
 
+export interface ActivitySpan {
+  occupied_locations: string[];
+  closure_locations: string[];
+  mirrored_locations: string[];
+  interchange_locations: string[];
+}
+
 export interface NetworkResponse {
   parameters: Record<string, unknown>;
   lines: Line[];
@@ -148,6 +155,7 @@ export interface NetworkResponse {
   activities: Activity[];
   routes: Record<string, string[]>;
   location_capacities: Record<string, number>;
+  activity_spans?: Record<string, ActivitySpan> | null;
 }
 
 export interface ScheduleAccess {
@@ -157,6 +165,7 @@ export interface ScheduleAccess {
   week: number;
   eclo: boolean;
   access_night: number;
+  physical_night?: number | null;
 }
 
 export interface ScheduleOccupancy {
@@ -174,6 +183,24 @@ export interface ContractResult {
   overrun_days: number;
 }
 
+export interface ScheduleExplanation {
+  activity_id: string;
+  reason_codes: string[];
+  summary: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface PhysicalCheckItem {
+  name: string;
+  passed: boolean;
+  detail: string | Record<string, unknown>;
+}
+
+export interface PhysicalCheckReport {
+  passed: boolean;
+  checks: PhysicalCheckItem[];
+}
+
 export interface ScheduleResponse {
   run_id: string;
   job_id: string;
@@ -181,6 +208,8 @@ export interface ScheduleResponse {
   access: ScheduleAccess[];
   occupancy: ScheduleOccupancy[];
   results: ContractResult[];
+  explanations: ScheduleExplanation[];
+  physical_checks?: PhysicalCheckReport | null;
 }
 
 export type Authority = "official" | "fallback";

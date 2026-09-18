@@ -1,11 +1,43 @@
-import type { CapacityHotspot } from "../api/types";
+import type { CapacityHotspot, HardViolation } from "../api/types";
 import Panel from "./Panel";
 
 interface HotspotsPanelProps {
   hotspots: CapacityHotspot[];
+  scenario?: string;
+  hardViolations?: HardViolation[];
 }
 
-function HotspotRow({ hotspot }: { hotspot: CapacityHotspot }) {
+type HotspotSeverity = "soft" | "hard";
+
+// Scenario A treats supply as hard. Scenario C allows exactly one soft excess
+// per location-week; beyond that it is a hard violation. Scenario B excess is
+// soft and only contributes to the excess score. An explicit capacity hard
+// violation always wins over the policy inference.
+function hotspotSeverity(
+  hotspot: CapacityHotspot,
+  scenario: string | undefined,
+  hardViolations: HardViolation[],
+): HotspotSeverity {
+  const flagged = hardViolations.some(
+    (violation) =>
+      violation.rule === "capacity" &&
+      violation.detail.startsWith(
+        `week ${hotspot.week} ${hotspot.location_id}:`,
+      ),
+  );
+  if (flagged) return "hard";
+  if (scenario === "A") return "hard";
+  if (scenario === "C") return hotspot.excess > 1 ? "hard" : "soft";
+  return "soft";
+}
+
+function HotspotRow({
+  hotspot,
+  severity,
+}: {
+  hotspot: CapacityHotspot;
+  severity: HotspotSeverity;
+}) {
   return (
     <tr>
       <th scope="row">
@@ -14,20 +46,34 @@ function HotspotRow({ hotspot }: { hotspot: CapacityHotspot }) {
       <td>W{hotspot.week}</td>
       <td>{hotspot.used}</td>
       <td>{hotspot.capacity}</td>
-      <td className={hotspot.excess > 0 ? "cell--danger" : ""}>
-        {hotspot.excess > 0 ? `+${hotspot.excess}` : "0"}
+      <td className={severity === "hard" ? "cell--danger" : "cell--warn"}>
+        +{hotspot.excess}
       </td>
     </tr>
   );
 }
 
-export default function HotspotsPanel({ hotspots }: HotspotsPanelProps) {
+export default function HotspotsPanel({
+  hotspots,
+  scenario,
+  hardViolations = [],
+}: HotspotsPanelProps) {
   const totalExcess = hotspots.reduce((sum, spot) => sum + spot.excess, 0);
+  const hardSet = new Set(
+    hotspots
+      .filter(
+        (spot) => hotspotSeverity(spot, scenario, hardViolations) === "hard",
+      )
+      .map((spot) => `${spot.location_id}-${spot.week}`),
+  );
+  const hardCount = hardSet.size;
+  const softCount = hotspots.length - hardCount;
+  const tone = hardCount > 0 ? "danger" : hotspots.length > 0 ? "warn" : "ok";
   return (
     <Panel
       title="Capacity hotspots"
       eyebrow="Location-weeks under strain"
-      tone={hotspots.length > 0 ? "danger" : "ok"}
+      tone={tone}
       actions={
         <span className="panel__meter">
           {hotspots.length} location{hotspots.length === 1 ? "" : "s"} · excess {totalExcess}
@@ -58,12 +104,29 @@ export default function HotspotsPanel({ hotspots }: HotspotsPanelProps) {
                 <HotspotRow
                   key={`${hotspot.location_id}-${hotspot.week}`}
                   hotspot={hotspot}
+                  severity={
+                    hardSet.has(`${hotspot.location_id}-${hotspot.week}`)
+                      ? "hard"
+                      : "soft"
+                  }
                 />
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {hotspots.length > 0 ? (
+        <p className="hotspots__legend">
+          {softCount > 0
+            ? "Amber excess is soft within the scenario allowance and does not block export."
+            : null}
+          {softCount > 0 && hardCount > 0 ? " " : ""}
+          {hardCount > 0
+            ? "Red excess is a hard capacity violation and blocks submission."
+            : null}
+        </p>
+      ) : null}
     </Panel>
   );
 }

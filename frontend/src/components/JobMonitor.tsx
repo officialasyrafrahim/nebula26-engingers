@@ -131,6 +131,10 @@ export default function JobMonitor({
           <dt>Time limit</dt>
           <dd>{job.time_limit_seconds ?? "default"}s</dd>
         </div>
+        <div className="metrics__cell">
+          <dt>Seed</dt>
+          <dd>{job.seed ?? "default"}</dd>
+        </div>
       </dl>
 
       {pollError ? (

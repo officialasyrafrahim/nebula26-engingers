@@ -138,6 +138,10 @@ export function getNetwork(runId: string): Promise<NetworkResponse> {
   return request<NetworkResponse>(`/runs/${runId}/network`);
 }
 
+export function listJobs(runId: string): Promise<ScenarioJob[]> {
+  return request<ScenarioJob[]>(`/runs/${runId}/jobs`);
+}
+
 export function createJob(
   runId: string,
   payload: ScenarioJobCreate,

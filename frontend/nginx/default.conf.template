@@ -1,0 +1,37 @@
+# Production nginx for the Rail Access Optimisation SPA.
+# ${RAO_API_UPSTREAM} is substituted by the nginx entrypoint at container start.
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # API and health stay same-origin so the built bundle needs no CORS.
+    location /api/ {
+        proxy_pass http://${RAO_API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        client_max_body_size 64m;
+    }
+
+    location = /healthz {
+        proxy_pass http://${RAO_API_UPSTREAM}/healthz;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+
+    # SPA fallback: unknown paths return index.html, never a 404 page.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

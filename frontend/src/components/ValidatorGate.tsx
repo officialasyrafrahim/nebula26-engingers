@@ -29,20 +29,24 @@ function GateCell({
 
 export default function ValidatorGate({ report }: ValidatorGateProps) {
   const ready = report.ready_for_submission;
+  const provisional = report.authority === "fallback";
   const violations = report.hard_violations.length;
+  const tone = ready ? (provisional ? "warn" : "ok") : "danger";
+  const banner = ready ? (provisional ? "provisional" : "open") : "blocked";
+  const bannerLabel = ready ? (provisional ? "Provisional" : "Ready for submission") : "Submission blocked";
   return (
     <Panel
       title="Validator gate"
-      eyebrow={`Stage 5 · Explain · authority ${report.authority}`}
-      tone={ready ? "ok" : "danger"}
+      eyebrow={`Stage 4 · Validate · authority ${report.authority}`}
+      tone={tone}
       actions={
-        <span className={`gate-banner gate-banner--${ready ? "open" : "blocked"}`}>
+        <span className={`gate-banner gate-banner--${banner}`}>
           <SignalLamp
-            tone={ready ? "ok" : "danger"}
-            pulse={ready}
-            label={ready ? "Ready for submission" : "Submission blocked"}
+            tone={ready ? (provisional ? "warn" : "ok") : "danger"}
+            pulse={ready && !provisional}
+            label={bannerLabel}
           />
-          <span>{ready ? "READY" : "BLOCKED"}</span>
+          <span>{ready ? (provisional ? "PROVISIONAL" : "READY") : "BLOCKED"}</span>
         </span>
       }
     >
@@ -68,7 +72,13 @@ export default function ValidatorGate({ report }: ValidatorGateProps) {
         <GateCell
           label="Ready for submission"
           passed={ready}
-          detail={ready ? "Export enabled" : "Export withheld until gate passes"}
+          detail={
+            ready
+              ? provisional
+                ? "Export enabled · provisional authority"
+                : "Export enabled · official authority"
+              : "Export withheld until gate passes"
+          }
         />
       </ul>
 
@@ -76,12 +86,18 @@ export default function ValidatorGate({ report }: ValidatorGateProps) {
         <span>
           Validation authority: <strong>{report.authority}</strong>
         </span>
-        {report.authority === "fallback" ? (
+        {provisional ? (
           <span className="gate-meta__provisional">
             Provisional: the official validator was not configured, so the bundled
-            fallback is the executable authority for this run.
+            fallback interpreted the published rules. Fallback success is not
+            authoritative acceptance.
           </span>
-        ) : null}
+        ) : (
+          <span>
+            Official: the recorded result comes from the configured official
+            validator.
+          </span>
+        )}
       </div>
 
       {report.parse_errors && report.parse_errors.length > 0 ? (

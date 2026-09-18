@@ -8,6 +8,7 @@ import {
   getReport,
   getSchedule,
   healthCheck,
+  listJobs,
   listRuns,
 } from "./api/client";
 import {
@@ -16,6 +17,7 @@ import {
   type PlanningRun,
   type Scenario,
   type ScenarioJob,
+  type ScenarioJobCreate,
   type ScheduleResponse,
   type ValidatorReportRead,
 } from "./api/types";
@@ -29,6 +31,7 @@ import ScenarioLauncher from "./components/ScenarioLauncher";
 import SignalLamp, { type LampTone } from "./components/SignalLamp";
 import UploadPanel from "./components/UploadPanel";
 import { useJobPolling } from "./hooks/useJobPolling";
+import type { ActivitySelection } from "./lib/schematic";
 
 type HealthState = "checking" | "ok" | "unavailable";
 
@@ -78,13 +81,13 @@ export default function App() {
   const [resultsLoading, setResultsLoading] = useState(false);
   const [resultError, setResultError] = useState<string | null>(null);
   const [loadedJobId, setLoadedJobId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<ActivitySelection | null>(null);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const jobsRef = useRef(jobsByRun);
-  jobsRef.current = jobsByRun;
-
   const selectedRunId = selectedRun?.id ?? null;
+  const selectedRunIdRef = useRef<string | null>(selectedRunId);
+  selectedRunIdRef.current = selectedRunId;
 
   const { job: polledJob, error: pollError } = useJobPolling(
     selectedRunId,
@@ -133,16 +136,20 @@ export default function App() {
         getSchedule(runId, jobId),
         getReport(runId, jobId),
       ]);
+      if (selectedRunIdRef.current !== runId) return;
       setScheduleData(schedule);
       setReportData(report);
       setLoadedJobId(jobId);
+      setSelection(null);
     } catch (caught) {
+      if (selectedRunIdRef.current !== runId) return;
       setScheduleData(null);
       setReportData(null);
       setLoadedJobId(null);
+      setSelection(null);
       setResultError(errorMessage(caught));
     } finally {
-      setResultsLoading(false);
+      if (selectedRunIdRef.current === runId) setResultsLoading(false);
     }
   }, []);
 
@@ -177,12 +184,45 @@ export default function App() {
     setLoadedJobId(null);
     setResultError(null);
     setTrackedJobId(null);
+    setSelection(null);
     if (!selectedRunId) return;
-    const active = (jobsRef.current[selectedRunId] ?? []).find((job) =>
-      isActiveJob(job.state),
-    );
-    if (active) setTrackedJobId(active.id);
-  }, [selectedRunId]);
+
+    let cancelled = false;
+
+    const newest = (list: ScenarioJob[]): ScenarioJob | null =>
+      list.length === 0
+        ? null
+        : list.reduce((latest, job) =>
+            new Date(job.submitted_at).getTime() >
+            new Date(latest.submitted_at).getTime()
+              ? job
+              : latest,
+          );
+
+    void (async () => {
+      try {
+        const list = await listJobs(selectedRunId);
+        if (cancelled) return;
+        setJobsByRun((current) => ({ ...current, [selectedRunId]: list }));
+        const active = newest(list.filter((job) => isActiveJob(job.state)));
+        const completed = newest(
+          list.filter((job) => job.state === "COMPLETED"),
+        );
+        const restore = active ?? completed;
+        if (!restore) return;
+        setTrackedJobId(restore.id);
+        if (restore.state === "COMPLETED") {
+          void loadResults(selectedRunId, restore.id);
+        }
+      } catch (caught) {
+        if (!cancelled) setActionError(errorMessage(caught));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId, loadResults]);
 
   useEffect(() => {
     if (!polledJob) return;
@@ -211,17 +251,24 @@ export default function App() {
   );
 
   const handleLaunch = useCallback(
-    async (scenario: Scenario, timeLimitSeconds?: number) => {
+    async (
+      scenario: Scenario,
+      timeLimitSeconds?: number,
+      seed?: number,
+    ) => {
       if (!selectedRun) {
         throw new Error("Select a planning run before dispatching a scenario.");
       }
       setLaunching(scenario);
       setActionError(null);
       try {
-        const payload =
-          timeLimitSeconds == null
-            ? { scenario }
-            : { scenario, time_limit_seconds: timeLimitSeconds };
+        const payload: ScenarioJobCreate = { scenario };
+        if (timeLimitSeconds != null) {
+          payload.time_limit_seconds = timeLimitSeconds;
+        }
+        if (seed != null) {
+          payload.seed = seed;
+        }
         const job = await createJob(selectedRun.id, payload);
         setJobsByRun((current) => ({
           ...current,
@@ -231,6 +278,7 @@ export default function App() {
         setReportData(null);
         setLoadedJobId(null);
         setResultError(null);
+        setSelection(null);
         setTrackedJobId(job.id);
       } finally {
         setLaunching(null);
@@ -270,16 +318,27 @@ export default function App() {
         setReportData(null);
         setLoadedJobId(null);
         setResultError(null);
+        setSelection(null);
       }
     },
     [loadResults],
   );
 
+  const handleSelect = useCallback((next: ActivitySelection) => {
+    setSelection(next);
+  }, []);
+
+  const handleClearSelection = useCallback(() => {
+    setSelection(null);
+  }, []);
+
   const resultReady =
     scheduleData != null &&
     reportData != null &&
     selectedRun != null &&
-    network != null;
+    network != null &&
+    scheduleData.run_id === selectedRun.id &&
+    scheduleData.job_id === loadedJobId;
 
   return (
     <div className="app">
@@ -427,6 +486,9 @@ export default function App() {
                   schedule={scheduleData}
                   report={reportData.report}
                   network={network}
+                  selection={selection}
+                  onSelect={handleSelect}
+                  onClearSelection={handleClearSelection}
                 />
               ) : null}
             </>
