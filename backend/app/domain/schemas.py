@@ -1,9 +1,12 @@
 """Pydantic v2 request and response schemas."""
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domain.enums import (
     ApprovalDecision,
@@ -149,11 +152,64 @@ class WorkPackageRead(ReadModel):
     created_at: datetime
 
 
+class PlanningTimeRange(BaseModel):
+    """Unavailable interval supplied in a planning resource snapshot."""
+
+    starts_at: datetime
+    ends_at: datetime
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> Self:
+        if self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be after starts_at")
+        return self
+
+
+class PlanningConstraintSnapshot(BaseModel):
+    """Point-in-time external constraints attached to a planning job."""
+
+    crew_unavailability: dict[uuid.UUID, list[PlanningTimeRange]] = Field(
+        default_factory=dict
+    )
+    asset_unavailability: dict[uuid.UUID, list[PlanningTimeRange]] = Field(
+        default_factory=dict
+    )
+    depot_parts: dict[uuid.UUID, dict[str, int]] = Field(default_factory=dict)
+    depot_tools: dict[uuid.UUID, dict[str, int]] = Field(default_factory=dict)
+    crew_regular_minutes: dict[uuid.UUID, int] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_quantities(self) -> Self:
+        quantities = [
+            quantity
+            for inventory in (*self.depot_parts.values(), *self.depot_tools.values())
+            for quantity in inventory.values()
+        ]
+        if any(quantity < 0 for quantity in quantities):
+            raise ValueError("resource quantities cannot be negative")
+        if any(minutes < 0 for minutes in self.crew_regular_minutes.values()):
+            raise ValueError("crew regular minutes cannot be negative")
+        return self
+
+
 class PlanJobSubmit(BaseModel):
     work_package_ids: list[uuid.UUID]
     horizon_start: datetime
     horizon_end: datetime
     notes: str | None = None
+    alternatives: int = Field(default=1, ge=1, le=3)
+    objective_profile: Literal["balanced", "speed", "cost", "workload"] = "balanced"
+    constraints: PlanningConstraintSnapshot = Field(
+        default_factory=PlanningConstraintSnapshot
+    )
+
+    @model_validator(mode="after")
+    def validate_request(self) -> Self:
+        if not self.work_package_ids:
+            raise ValueError("at least one work package is required")
+        if self.horizon_end <= self.horizon_start:
+            raise ValueError("horizon_end must be after horizon_start")
+        return self
 
 
 class PlanJobRead(ReadModel):

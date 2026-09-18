@@ -55,6 +55,9 @@ def submit_plan_job(
             "horizon_end": _iso(data.horizon_end),
             "notes": data.notes,
             "actor": requested_by,
+            "alternatives": data.alternatives,
+            "objective_profile": data.objective_profile,
+            "constraints": data.constraints.model_dump(mode="json"),
         },
     )
     db.add(job)
@@ -92,6 +95,17 @@ def cancel_job(db: Session, job_id: uuid.UUID) -> PlanJob:
 def get_proposal(db: Session, proposal_id: uuid.UUID) -> ScheduleProposal | None:
     """Fetch a schedule proposal by identifier."""
     return db.get(ScheduleProposal, proposal_id)
+
+
+def list_proposals(db: Session, job_id: uuid.UUID) -> list[ScheduleProposal]:
+    """List alternative proposals produced by a planning job."""
+    return list(
+        db.scalars(
+            select(ScheduleProposal)
+            .where(ScheduleProposal.plan_job_id == job_id)
+            .order_by(ScheduleProposal.created_at, ScheduleProposal.id)
+        ).all()
+    )
 
 
 def list_assignments(db: Session, proposal_id: uuid.UUID) -> list[ScheduleAssignment]:
@@ -147,6 +161,9 @@ def invalidate_proposal(
             "notes": f"replan of proposal {proposal.id}",
             "replan_of": str(proposal.id),
             "trigger": trigger,
+            "alternatives": original.get("alternatives", 1),
+            "objective_profile": original.get("objective_profile", "balanced"),
+            "constraints": original.get("constraints", {}),
         },
     )
     db.add(replan_job)

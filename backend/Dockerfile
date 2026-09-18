@@ -3,7 +3,7 @@ FROM python:3.13-slim
 WORKDIR /app
 
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[solver,postgres,events]"
 
 COPY app ./app
 

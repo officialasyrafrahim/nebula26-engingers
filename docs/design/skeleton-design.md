@@ -359,27 +359,30 @@ A dedicated async worker (`app/modules/planning/solver.py`, invoked by `app/work
 
 | Field | Meaning | Requirement |
 | --- | --- | --- |
-| `work_packages` | Candidate work with priority, duration, competency, parts | WPK-01, PLN-02 |
-| Trains / asset availability | When assets are available for maintenance | PLN-02 |
-| `crews` | Availability and competencies | PLN-02 |
-| Parts / equipment | Required resources and stock | PLN-02 |
-| `depots` | Capacity at each location | PLN-02 |
-| `windows` | Allowed/blocked maintenance windows | PLN-02 |
-| `objectives` / weights | Downtime, disruption, travel, overtime, workload | PLN-03 |
-| `time_limit_s` | Solver time limit | PLN-04 |
+| `work_packages` | Candidate work with priority, duration, competency, parts, tools | WPK-01, PLN-02 |
+| `horizon_start` / `horizon_end` | Planning horizon bounds | PLN-02 |
+| `crews` | Competencies and home depot | PLN-02 |
+| `crew_unavailability` / `asset_unavailability` | Blocked intervals per crew/asset (per-job snapshot) | PLN-02 |
+| `depot_parts` / `depot_tools` | Consumable stock and reusable tool capacity per depot | PLN-02 |
+| `crew_regular_minutes` | Regular-time budget before overtime costing | PLN-03 |
+| `depots` | Concurrent capacity at each location | PLN-02 |
+| `windows` | Allowed maintenance windows (depot-scoped) | PLN-02 |
+| objective profile | `balanced` / `speed` / `cost` / `workload` weight sets over makespan, downtime, priority delay, overtime, travel, workload spread, bundling | PLN-03 |
+| `time_limit_seconds` | Solver time limit (divided across alternative attempts) | PLN-04 |
 
 `SolverResult`:
 
 | Field | Meaning |
 | --- | --- |
 | `feasible` | Boolean |
-| `assignments` | Work package → crew/depot/start/end |
+| `assignments` | Work package → crew/depot/window/start/end with travel and profile |
 | `objective_breakdown` | Structured per-objective contributions (no LLM-derived benefit claims) |
 | `infeasibility_reasons` | Structured reasons when no feasible plan exists |
-| `alternatives` | Optional materially different feasible plans |
-| `bundling` | Identified compatible work bundled together |
+| `objective_profile` | Weight profile used for this option |
 
-Implementation note: OR-Tools CP-SAT is the target solver. When `ortools` is absent the worker uses a naive greedy fallback that still reports feasibility, assignments and infeasibility reasons so the contract and tests hold. No mandatory constraint may be silently violated (PLN-01).
+`solve_alternatives()` returns up to three `SolverResult` options with materially different crew/depot/window signatures; the worker persists each as its own `ScheduleProposal` with `option_index`. Same-asset work sharing a crew/depot/window is rewarded as bundling.
+
+Implementation note: OR-Tools CP-SAT is the target solver, installed as the optional `solver` extra. When `ortools` is absent the worker uses a deterministic greedy fallback that enforces the same mandatory constraints and reports feasibility, assignments and infeasibility reasons so the contract and tests hold. No mandatory constraint may be silently violated (PLN-01).
 
 ### 7.4 Replanning / invalidation flow (RPL-01)
 
@@ -474,9 +477,9 @@ Status legend: **implemented-stub** (structure + happy path, production logic de
 | ASM-02 | `Assessment` (`RecommendationClass`, `InterventionPriority`) | partial | Recommendation + priority/horizon emitted |
 | ASM-03 | `Evidence` (`EvidenceType`), assessment rationale | partial | OBSERVATION / MODEL_INFERENCE / CONFIRMED_FINDING distinguished; principal evidence |
 | WPK-01 | `WorkPackage`, `modules/assessment` | partial | Core fields present; optional skills/parts/duration marked unavailable, never invented |
-| PLN-01 | `modules/planning/solver.py` | partial | Greedy fallback + structured infeasibility; CP-SAT deferred |
-| PLN-02 | `solver.py` PlanRequest constraints | partial | Basic priority/time/crew/depot/window handling; full constraint set deferred |
-| PLN-03 | `SolverResult.objective_breakdown` | partial | Simple weighted objective; alternatives/bundling limited |
+| PLN-01 | `modules/planning/solver.py` | implemented | CP-SAT with deterministic fallback; structured infeasibility reasons; no silent constraint violation |
+| PLN-02 | `solver.py` PlanRequest constraints | implemented | Competency, crew/asset unavailability, depot capacity, parts consumption, tool capacity, windows, priority |
+| PLN-03 | `SolverResult.objective_breakdown` | implemented | Weighted profiles (balanced/speed/cost/workload); up to three materially different alternatives; same-asset bundling reward |
 | PLN-04 | `modules/planning/queue.py`, `/planning/jobs`, worker | implemented-stub | 202 never inline; lifecycle, cancel, time limit |
 | RPL-01 | `PlanInvalidation`, `/planning/proposals/{id}/invalidate` | partial | Manual/triggered invalidation + replan; automatic trigger detection deferred |
 | HUM-01 | `modules/approvals`, `security.require_role` | partial | approve/modify/reject with actor + timestamp; UI minimal |
@@ -513,8 +516,8 @@ Acceptance coverage: AT-01/02 (DAT), AT-04 (DET), AT-05 (ASM/WPK), AT-06 (PLN-04
 | Assets/ingestion | Canonical Asset/Component, telemetry + source ingestion, quality states | Rich schema-mapping registry, backpressure tuning |
 | Detection | Threshold/statistical condition detection with score/evidence/trend | Trained ML, fleet-specific models |
 | Assessment | Rule-based recommendation, priority, work package creation | Deep policy/context engine |
-| Planning | Async job API (202), lifecycle, cancel, timeout, queue abstraction, proposals, invalidation | Full CP-SAT constraints/objectives/alternatives; Redis Streams exercised |
-| Solver | Greedy fallback honoring the solver contract | OR-Tools CP-SAT |
+| Planning | Async job API (202), lifecycle, cancel, timeout, queue abstraction, proposals (multiple per job), invalidation, constraint snapshot replay | Automatic disruption detection (RPL-01); Redis Streams exercised |
+| Solver | OR-Tools CP-SAT (optional extra) with full mandatory constraints, objective profiles and alternatives; deterministic fallback mirrors the same constraints | — |
 | Approvals/audit | Approve/modify/reject, publish, versioned records, `AuditLog` | Rich audit UI/search |
 | Execution | Assign/start/complete, outcomes incl. fault-not-found, prediction link | Model-evaluation pipeline |
 | Integration | Adapter base + mock CMMS read + explicit approved write-back | Real CMMS/EAM connectors |
@@ -526,11 +529,10 @@ Acceptance coverage: AT-01/02 (DAT), AT-04 (DET), AT-05 (ASM/WPK), AT-06 (PLN-04
 
 ### 10.2 Next steps (ordered)
 
-1. **Real solver constraints and objectives** — implement OR-Tools CP-SAT for PLN-02/PLN-03 (availability, competency, parts, depot capacity, windows; downtime/disruption/travel/overtime objectives) with alternatives and bundling.
-2. **TimescaleDB hypertables and retention** — move telemetry to hypertables with compression/retention, then run the PERF-01 capacity characterization (AT-03).
-3. **Redis Streams queue and durable worker** — replace in-memory transport, add retry/dead-letter handling and horizontal solver workers (PLN-04, ARC-01).
-4. **OIDC/RBAC and secrets** — replace header stub with OIDC/OAuth2 SSO/MFA, server-side claim-based authorization, secret/cert management (SEC-01/02).
-5. **Real integration adapters** — add one real CMMS/EAM read adapter and one approved write-back path, keeping operator systems authoritative (INT-01).
-6. **Historical replay and shadow mode** — implement VAL-01/VAL-02 replay, non-operational shadow recommendations and value metrics; expose DEMO-01 scenarios.
-7. **Model lifecycle** — candidate-vs-baseline evaluation harness, metric capture and promotion gate integrated with the registry (ML-01..03).
-8. **Observability and edge** — OpenTelemetry/Prometheus instrumentation and selective edge store-and-forward/feature extraction (DEP-01).
+1. **TimescaleDB hypertables and retention** — move telemetry to hypertables with compression/retention, then run the PERF-01 capacity characterization (AT-03).
+2. **Redis Streams queue and durable worker** — replace in-memory transport, add retry/dead-letter handling and horizontal solver workers (PLN-04, ARC-01).
+3. **OIDC/RBAC and secrets** — replace header stub with OIDC/OAuth2 SSO/MFA, server-side claim-based authorization, secret/cert management (SEC-01/02).
+4. **Real integration adapters** — add one real CMMS/EAM read adapter and one approved write-back path, keeping operator systems authoritative (INT-01).
+5. **Historical replay and shadow mode** — implement VAL-01/VAL-02 replay, non-operational shadow recommendations and value metrics; expose DEMO-01 scenarios.
+6. **Model lifecycle** — candidate-vs-baseline evaluation harness, metric capture and promotion gate integrated with the registry (ML-01..03).
+7. **Observability and edge** — OpenTelemetry/Prometheus instrumentation and selective edge store-and-forward/feature extraction (DEP-01).

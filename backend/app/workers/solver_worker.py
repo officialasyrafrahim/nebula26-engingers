@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
-from app.domain.enums import JobState, ProposalState
+from app.domain.enums import JobState, ProposalState, WorkPackageState
 from app.domain.models import (
     Crew,
     Depot,
@@ -22,7 +22,7 @@ from app.domain.models import (
     utcnow,
 )
 from app.modules.planning.queue import get_queue
-from app.modules.planning.solver import PlanRequest, SolverResult, solve_plan
+from app.modules.planning.solver import PlanRequest, SolverResult, solve_alternatives
 
 
 def _ensure_aware(value: datetime | None) -> datetime | None:
@@ -52,6 +52,40 @@ def _parse_uuid(value: object) -> uuid.UUID | None:
         return uuid.UUID(str(value))
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _constraint_ranges(payload: dict, key: str) -> dict[str, list[dict]]:
+    """Parse stored resource-snapshot intervals into aware timestamps."""
+    values = payload.get("constraints", {}).get(key, {})
+    if not isinstance(values, dict):
+        return {}
+    parsed = {}
+    for owner, ranges in values.items():
+        parsed[str(owner)] = [
+            {
+                "starts_at": _parse_timestamp(item.get("starts_at")),
+                "ends_at": _parse_timestamp(item.get("ends_at")),
+            }
+            for item in ranges
+            if _parse_timestamp(item.get("starts_at")) is not None
+            and _parse_timestamp(item.get("ends_at")) is not None
+        ]
+    return parsed
+
+
+def _constraint_mapping(payload: dict, key: str) -> dict[str, dict]:
+    """Read a string-keyed mapping from the stored constraint snapshot."""
+    values = payload.get("constraints", {}).get(key, {})
+    if not isinstance(values, dict):
+        return {}
+    return {str(owner): dict(value) for owner, value in values.items()}
+
+
+def _constraint_minutes(payload: dict) -> dict[str, int]:
+    values = payload.get("constraints", {}).get("crew_regular_minutes", {})
+    if not isinstance(values, dict):
+        return {}
+    return {str(owner): int(value) for owner, value in values.items()}
 
 
 def _build_plan_request(session: Session, job: PlanJob) -> PlanRequest:
@@ -86,6 +120,9 @@ def _build_plan_request(session: Session, job: PlanJob) -> PlanRequest:
                 "priority": work_package.priority.value,
                 "est_duration_min": work_package.est_duration_min or 0,
                 "competency": work_package.competency,
+                "asset_id": str(work_package.asset_id),
+                "parts": work_package.parts or [],
+                "tools": work_package.tools or [],
             }
             for work_package in work_packages
         ],
@@ -115,11 +152,20 @@ def _build_plan_request(session: Session, job: PlanJob) -> PlanRequest:
             {"id": str(depot.id), "name": depot.name, "capacity": depot.capacity}
             for depot in depots
         ],
+        crew_unavailability=_constraint_ranges(payload, "crew_unavailability"),
+        asset_unavailability=_constraint_ranges(payload, "asset_unavailability"),
+        depot_parts=_constraint_mapping(payload, "depot_parts"),
+        depot_tools=_constraint_mapping(payload, "depot_tools"),
+        crew_regular_minutes=_constraint_minutes(payload),
     )
 
 
 def _persist_proposal(
-    session: Session, job: PlanJob, request: PlanRequest, result: SolverResult
+    session: Session,
+    job: PlanJob,
+    request: PlanRequest,
+    result: SolverResult,
+    option_index: int,
 ) -> ScheduleProposal:
     """Persist a feasible proposal and its assignments."""
     proposal = ScheduleProposal(
@@ -129,29 +175,28 @@ def _persist_proposal(
             **result.objective_breakdown,
             "work_package_count": len(request.work_packages),
             "assignment_count": len(result.assignments),
+            "option_index": option_index,
+            "objective_profile": result.objective_profile,
         },
     )
     session.add(proposal)
     session.flush()
 
     for assignment in result.assignments:
+        work_package_id = uuid.UUID(str(assignment["work_package_id"]))
         session.add(
             ScheduleAssignment(
                 proposal_id=proposal.id,
-                work_package_id=uuid.UUID(str(assignment["work_package_id"])),
+                work_package_id=work_package_id,
                 crew_id=_parse_uuid(assignment.get("crew_id")),
                 depot_id=_parse_uuid(assignment.get("depot_id")),
                 window_start=assignment.get("window_start"),
                 window_end=assignment.get("window_end"),
             )
         )
-
-    job.state = JobState.COMPLETED
-    job.result = {
-        "objective_breakdown": result.objective_breakdown,
-        "proposal_id": str(proposal.id),
-        "assignment_count": len(result.assignments),
-    }
+        work_package = session.get(WorkPackage, work_package_id)
+        if work_package is not None and work_package.state == WorkPackageState.CREATED:
+            work_package.state = WorkPackageState.PLANNED
     return proposal
 
 
@@ -193,7 +238,14 @@ def process_next_job(timeout: float | None = 5.0) -> bool:
 
         try:
             request = _build_plan_request(session, job)
-            result = solve_plan(request)
+            payload = job.request if isinstance(job.request, dict) else {}
+            requested_alternatives = max(1, min(3, int(payload.get("alternatives", 1))))
+            objective_profile = str(payload.get("objective_profile", "balanced"))
+            results = solve_alternatives(
+                request,
+                alternatives=requested_alternatives,
+                objective_profile=objective_profile,
+            )
         except TimeoutError as exc:
             _mark_job(session, job_id, JobState.TIMED_OUT, error=str(exc))
             return True
@@ -201,15 +253,41 @@ def process_next_job(timeout: float | None = 5.0) -> bool:
             _mark_job(session, job_id, JobState.FAILED, error=str(exc))
             return True
 
-        if not result.feasible:
+        feasible_results = [result for result in results if result.feasible]
+        if not feasible_results:
+            reasons = [
+                reason
+                for result in results
+                for reason in result.infeasibility_reasons
+            ]
             job.state = JobState.INFEASIBLE
-            job.result = {"infeasibility_reasons": result.infeasibility_reasons}
+            job.result = {"infeasibility_reasons": reasons}
             job.finished_at = utcnow()
             session.commit()
             return True
 
         try:
-            _persist_proposal(session, job, request, result)
+            proposals = [
+                _persist_proposal(session, job, request, result, index)
+                for index, result in enumerate(feasible_results, start=1)
+            ]
+            job.state = JobState.COMPLETED
+            job.result = {
+                "proposal_ids": [str(proposal.id) for proposal in proposals],
+                "requested_alternatives": requested_alternatives,
+                "produced_alternatives": len(proposals),
+                "alternatives": [
+                    {
+                        "proposal_id": str(proposal.id),
+                        "objective_profile": result.objective_profile,
+                        "objective_breakdown": result.objective_breakdown,
+                        "assignment_count": len(result.assignments),
+                    }
+                    for proposal, result in zip(
+                        proposals, feasible_results, strict=True
+                    )
+                ],
+            }
             job.finished_at = utcnow()
             session.commit()
         except Exception as exc:

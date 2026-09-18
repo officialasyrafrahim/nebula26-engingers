@@ -63,6 +63,19 @@ def get_plan_job(job_id: uuid.UUID, db: Session = Depends(get_db)) -> PlanJobRea
     return job
 
 
+@router.get(
+    "/planning/jobs/{job_id}/proposals",
+    response_model=list[ScheduleProposalRead],
+)
+def list_job_proposals(
+    job_id: uuid.UUID, db: Session = Depends(get_db)
+) -> list[ScheduleProposalRead]:
+    """List materially different alternatives produced for a job."""
+    if service.get_job(db, job_id) is None:
+        raise HTTPException(status_code=404, detail="plan job not found")
+    return service.list_proposals(db, job_id)
+
+
 @router.post("/planning/jobs/{job_id}/cancel", response_model=PlanJobRead)
 def cancel_plan_job(
     job_id: uuid.UUID,

@@ -66,11 +66,27 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["DAT-01"],
-      "acceptance_tests": ["AT-01"],
-      "paths": ["backend/app/modules/assets/", "backend/app/modules/ingestion/"],
-      "labels": ["owner:dev-1-data", "area:data", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-1", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "DAT-01"
+      ],
+      "acceptance_tests": [
+        "AT-01"
+      ],
+      "paths": [
+        "backend/app/modules/assets/",
+        "backend/app/modules/ingestion/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:data",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-1",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-DATA-002",
@@ -81,11 +97,28 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["DAT-02"],
-      "acceptance_tests": ["AT-02"],
-      "paths": ["backend/app/modules/ingestion/", "backend/app/domain/enums.py"],
-      "labels": ["owner:dev-1-data", "area:data", "status:done", "type:feature", "risk:safety"],
-      "completion": {"completed_by": "DEV-1", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "DAT-02"
+      ],
+      "acceptance_tests": [
+        "AT-02"
+      ],
+      "paths": [
+        "backend/app/modules/ingestion/",
+        "backend/app/domain/enums.py"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:data",
+        "status:done",
+        "type:feature",
+        "risk:safety"
+      ],
+      "completion": {
+        "completed_by": "DEV-1",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-DATA-003",
@@ -96,11 +129,34 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 8,
-      "requirements": ["DET-01", "DET-02", "ASM-01", "ASM-02", "ASM-03", "WPK-01"],
-      "acceptance_tests": ["AT-04", "AT-05"],
-      "paths": ["backend/app/modules/condition/", "backend/app/modules/assessment/"],
-      "labels": ["owner:dev-1-data", "area:condition", "status:done", "type:feature", "risk:safety"],
-      "completion": {"completed_by": "DEV-1", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "DET-01",
+        "DET-02",
+        "ASM-01",
+        "ASM-02",
+        "ASM-03",
+        "WPK-01"
+      ],
+      "acceptance_tests": [
+        "AT-04",
+        "AT-05"
+      ],
+      "paths": [
+        "backend/app/modules/condition/",
+        "backend/app/modules/assessment/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:condition",
+        "status:done",
+        "type:feature",
+        "risk:safety"
+      ],
+      "completion": {
+        "completed_by": "DEV-1",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-DATA-004",
@@ -111,10 +167,24 @@
       "status": "ready",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["PERF-01"],
-      "acceptance_tests": ["AT-03"],
-      "paths": ["backend/app/modules/ingestion/", "deploy/", "docs/design/"],
-      "labels": ["owner:dev-1-data", "area:data", "status:ready", "type:feature", "risk:migration"],
+      "requirements": [
+        "PERF-01"
+      ],
+      "acceptance_tests": [
+        "AT-03"
+      ],
+      "paths": [
+        "backend/app/modules/ingestion/",
+        "deploy/",
+        "docs/design/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:data",
+        "status:ready",
+        "type:feature",
+        "risk:migration"
+      ],
       "completion": null
     },
     {
@@ -126,11 +196,28 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["ML-02", "ML-03"],
-      "acceptance_tests": ["AT-10"],
-      "paths": ["backend/app/modules/model_registry/", "backend/app/domain/models.py"],
-      "labels": ["owner:dev-1-data", "area:model", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-1", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "ML-02",
+        "ML-03"
+      ],
+      "acceptance_tests": [
+        "AT-10"
+      ],
+      "paths": [
+        "backend/app/modules/model_registry/",
+        "backend/app/domain/models.py"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:model",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-1",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-MODEL-002",
@@ -141,10 +228,24 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["ML-01", "ML-02", "ML-03"],
-      "acceptance_tests": ["AT-10"],
-      "paths": ["backend/app/modules/model_registry/", "backend/app/modules/condition/"],
-      "labels": ["owner:dev-1-data", "area:model", "status:backlog", "type:feature"],
+      "requirements": [
+        "ML-01",
+        "ML-02",
+        "ML-03"
+      ],
+      "acceptance_tests": [
+        "AT-10"
+      ],
+      "paths": [
+        "backend/app/modules/model_registry/",
+        "backend/app/modules/condition/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:model",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -156,10 +257,24 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 5,
-      "requirements": ["FBK-01", "ML-01"],
-      "acceptance_tests": ["AT-09", "AT-10"],
-      "paths": ["backend/app/modules/model_registry/", "backend/app/modules/execution/"],
-      "labels": ["owner:dev-1-data", "area:model", "status:backlog", "type:feature"],
+      "requirements": [
+        "FBK-01",
+        "ML-01"
+      ],
+      "acceptance_tests": [
+        "AT-09",
+        "AT-10"
+      ],
+      "paths": [
+        "backend/app/modules/model_registry/",
+        "backend/app/modules/execution/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:model",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -171,11 +286,27 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 8,
-      "requirements": ["PLN-04"],
-      "acceptance_tests": ["AT-06"],
-      "paths": ["backend/app/modules/planning/", "backend/app/workers/"],
-      "labels": ["owner:dev-2-scheduling", "area:planning", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-2", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "PLN-04"
+      ],
+      "acceptance_tests": [
+        "AT-06"
+      ],
+      "paths": [
+        "backend/app/modules/planning/",
+        "backend/app/workers/"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:planning",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-2",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-PLAN-002",
@@ -186,11 +317,29 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 8,
-      "requirements": ["PLN-01", "PLN-02", "PLN-03"],
-      "acceptance_tests": ["AT-06"],
-      "paths": ["backend/app/modules/planning/solver.py"],
-      "labels": ["owner:dev-2-scheduling", "area:planning", "status:done", "type:feature", "risk:safety"],
-      "completion": {"completed_by": "DEV-2", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "PLN-01",
+        "PLN-02",
+        "PLN-03"
+      ],
+      "acceptance_tests": [
+        "AT-06"
+      ],
+      "paths": [
+        "backend/app/modules/planning/solver.py"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:planning",
+        "status:done",
+        "type:feature",
+        "risk:safety"
+      ],
+      "completion": {
+        "completed_by": "DEV-2",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-PLAN-003",
@@ -198,13 +347,29 @@
       "owner": "DEV-2",
       "reviewer": "DEV-1",
       "area": "planning",
-      "status": "ready",
+      "status": "review",
       "milestone": "production-hardening",
       "estimate_points": 13,
-      "requirements": ["PLN-01", "PLN-02", "PLN-03"],
-      "acceptance_tests": ["AT-06", "AT-07"],
-      "paths": ["backend/app/modules/planning/solver.py", "backend/tests/"],
-      "labels": ["owner:dev-2-scheduling", "area:planning", "status:ready", "type:feature", "risk:safety"],
+      "requirements": [
+        "PLN-01",
+        "PLN-02",
+        "PLN-03"
+      ],
+      "acceptance_tests": [
+        "AT-06",
+        "AT-07"
+      ],
+      "paths": [
+        "backend/app/modules/planning/solver.py",
+        "backend/tests/"
+      ],
+      "labels": [
+        "area:planning",
+        "type:feature",
+        "risk:safety",
+        "owner:dev-2-scheduling",
+        "status:review"
+      ],
       "completion": null
     },
     {
@@ -216,11 +381,27 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["RPL-01"],
-      "acceptance_tests": ["AT-07"],
-      "paths": ["backend/app/modules/planning/"],
-      "labels": ["owner:dev-2-scheduling", "area:planning", "status:done", "type:feature", "risk:safety"],
-      "completion": {"completed_by": "DEV-2", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "RPL-01"
+      ],
+      "acceptance_tests": [
+        "AT-07"
+      ],
+      "paths": [
+        "backend/app/modules/planning/"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:planning",
+        "status:done",
+        "type:feature",
+        "risk:safety"
+      ],
+      "completion": {
+        "completed_by": "DEV-2",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-PLAN-005",
@@ -231,10 +412,23 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["RPL-01"],
-      "acceptance_tests": ["AT-07"],
-      "paths": ["backend/app/modules/planning/", "backend/app/workers/"],
-      "labels": ["owner:dev-2-scheduling", "area:planning", "status:backlog", "type:feature", "risk:safety"],
+      "requirements": [
+        "RPL-01"
+      ],
+      "acceptance_tests": [
+        "AT-07"
+      ],
+      "paths": [
+        "backend/app/modules/planning/",
+        "backend/app/workers/"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:planning",
+        "status:backlog",
+        "type:feature",
+        "risk:safety"
+      ],
       "completion": null
     },
     {
@@ -246,11 +440,32 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["HUM-01", "HUM-02", "AUD-01", "AUD-02"],
-      "acceptance_tests": ["AT-08", "AT-09"],
-      "paths": ["backend/app/modules/approvals/", "backend/app/core/audit.py"],
-      "labels": ["owner:dev-2-scheduling", "area:workflow", "status:done", "type:feature", "risk:safety"],
-      "completion": {"completed_by": "DEV-2", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "HUM-01",
+        "HUM-02",
+        "AUD-01",
+        "AUD-02"
+      ],
+      "acceptance_tests": [
+        "AT-08",
+        "AT-09"
+      ],
+      "paths": [
+        "backend/app/modules/approvals/",
+        "backend/app/core/audit.py"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:workflow",
+        "status:done",
+        "type:feature",
+        "risk:safety"
+      ],
+      "completion": {
+        "completed_by": "DEV-2",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-EXEC-001",
@@ -261,11 +476,28 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["EXE-01", "FBK-01", "AUD-02"],
-      "acceptance_tests": ["AT-09"],
-      "paths": ["backend/app/modules/execution/"],
-      "labels": ["owner:dev-2-scheduling", "area:workflow", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-2", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "EXE-01",
+        "FBK-01",
+        "AUD-02"
+      ],
+      "acceptance_tests": [
+        "AT-09"
+      ],
+      "paths": [
+        "backend/app/modules/execution/"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:workflow",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-2",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-PLATFORM-001",
@@ -276,11 +508,31 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 8,
-      "requirements": ["ARC-01", "AUD-01", "SEC-01"],
-      "acceptance_tests": ["AT-08", "AT-13"],
-      "paths": ["backend/app/core/", "backend/app/domain/", "backend/app/main.py"],
-      "labels": ["owner:dev-3-platform", "area:platform", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-3", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "ARC-01",
+        "AUD-01",
+        "SEC-01"
+      ],
+      "acceptance_tests": [
+        "AT-08",
+        "AT-13"
+      ],
+      "paths": [
+        "backend/app/core/",
+        "backend/app/domain/",
+        "backend/app/main.py"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:platform",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-3",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-DEPLOY-001",
@@ -291,11 +543,29 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["ARC-02", "DEP-01"],
-      "acceptance_tests": ["AT-13"],
-      "paths": ["deploy/", "backend/Dockerfile", "Makefile"],
-      "labels": ["owner:dev-3-platform", "area:platform", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-3", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "ARC-02",
+        "DEP-01"
+      ],
+      "acceptance_tests": [
+        "AT-13"
+      ],
+      "paths": [
+        "deploy/",
+        "backend/Dockerfile",
+        "Makefile"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:platform",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-3",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-INTEGRATION-001",
@@ -306,11 +576,27 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["INT-01"],
-      "acceptance_tests": ["AT-11"],
-      "paths": ["backend/app/modules/integration/"],
-      "labels": ["owner:dev-3-platform", "area:integration", "status:done", "type:feature", "risk:integration"],
-      "completion": {"completed_by": "DEV-3", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "INT-01"
+      ],
+      "acceptance_tests": [
+        "AT-11"
+      ],
+      "paths": [
+        "backend/app/modules/integration/"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:integration",
+        "status:done",
+        "type:feature",
+        "risk:integration"
+      ],
+      "completion": {
+        "completed_by": "DEV-3",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-PLATFORM-002",
@@ -321,10 +607,27 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["PLN-04", "AUD-01", "ARC-01"],
-      "acceptance_tests": ["AT-06", "AT-08"],
-      "paths": ["backend/app/modules/planning/queue.py", "backend/app/core/db.py", "deploy/"],
-      "labels": ["owner:dev-3-platform", "area:platform", "status:backlog", "type:feature", "risk:migration"],
+      "requirements": [
+        "PLN-04",
+        "AUD-01",
+        "ARC-01"
+      ],
+      "acceptance_tests": [
+        "AT-06",
+        "AT-08"
+      ],
+      "paths": [
+        "backend/app/modules/planning/queue.py",
+        "backend/app/core/db.py",
+        "deploy/"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:platform",
+        "status:backlog",
+        "type:feature",
+        "risk:migration"
+      ],
       "completion": null
     },
     {
@@ -336,10 +639,22 @@
       "status": "ready",
       "milestone": "production-hardening",
       "estimate_points": 5,
-      "requirements": ["INT-01"],
-      "acceptance_tests": ["AT-11"],
-      "paths": ["backend/app/modules/integration/"],
-      "labels": ["owner:dev-3-platform", "area:integration", "status:ready", "type:feature", "risk:integration"],
+      "requirements": [
+        "INT-01"
+      ],
+      "acceptance_tests": [
+        "AT-11"
+      ],
+      "paths": [
+        "backend/app/modules/integration/"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:integration",
+        "status:ready",
+        "type:feature",
+        "risk:integration"
+      ],
       "completion": null
     },
     {
@@ -351,10 +666,25 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["SEC-01", "SEC-02"],
-      "acceptance_tests": ["AT-13"],
-      "paths": ["backend/app/core/security.py", "deploy/", "docs/design/"],
-      "labels": ["owner:dev-3-platform", "area:security", "status:backlog", "type:feature", "risk:safety"],
+      "requirements": [
+        "SEC-01",
+        "SEC-02"
+      ],
+      "acceptance_tests": [
+        "AT-13"
+      ],
+      "paths": [
+        "backend/app/core/security.py",
+        "deploy/",
+        "docs/design/"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:security",
+        "status:backlog",
+        "type:feature",
+        "risk:safety"
+      ],
       "completion": null
     },
     {
@@ -366,10 +696,24 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 2,
-      "requirements": ["DAT-02", "PERF-01"],
-      "acceptance_tests": ["AT-02", "AT-03"],
-      "paths": ["backend/app/modules/ingestion/", "backend/app/modules/condition/"],
-      "labels": ["owner:dev-1-data", "area:observability", "status:backlog", "type:feature"],
+      "requirements": [
+        "DAT-02",
+        "PERF-01"
+      ],
+      "acceptance_tests": [
+        "AT-02",
+        "AT-03"
+      ],
+      "paths": [
+        "backend/app/modules/ingestion/",
+        "backend/app/modules/condition/"
+      ],
+      "labels": [
+        "owner:dev-1-data",
+        "area:observability",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -381,10 +725,23 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 3,
-      "requirements": ["DEP-01", "ARC-01"],
-      "acceptance_tests": ["AT-13"],
-      "paths": ["backend/app/", "deploy/"],
-      "labels": ["owner:dev-3-platform", "area:observability", "status:backlog", "type:feature"],
+      "requirements": [
+        "DEP-01",
+        "ARC-01"
+      ],
+      "acceptance_tests": [
+        "AT-13"
+      ],
+      "paths": [
+        "backend/app/",
+        "deploy/"
+      ],
+      "labels": [
+        "owner:dev-3-platform",
+        "area:observability",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -396,11 +753,27 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 3,
-      "requirements": ["ARC-01", "DEP-01"],
-      "acceptance_tests": ["AT-13"],
-      "paths": ["frontend/"],
-      "labels": ["owner:dev-4-product", "area:frontend", "status:done", "type:feature"],
-      "completion": {"completed_by": "DEV-4", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "ARC-01",
+        "DEP-01"
+      ],
+      "acceptance_tests": [
+        "AT-13"
+      ],
+      "paths": [
+        "frontend/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:frontend",
+        "status:done",
+        "type:feature"
+      ],
+      "completion": {
+        "completed_by": "DEV-4",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-ASSISTANT-001",
@@ -411,11 +784,29 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 8,
-      "requirements": ["AI-01", "HUM-02"],
-      "acceptance_tests": ["AT-11"],
-      "paths": ["backend/app/modules/assistant/", "frontend/src/api/client.ts"],
-      "labels": ["owner:dev-4-product", "area:assistant", "status:done", "type:feature", "risk:data-egress"],
-      "completion": {"completed_by": "DEV-4", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "requirements": [
+        "AI-01",
+        "HUM-02"
+      ],
+      "acceptance_tests": [
+        "AT-11"
+      ],
+      "paths": [
+        "backend/app/modules/assistant/",
+        "frontend/src/api/client.ts"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:assistant",
+        "status:done",
+        "type:feature",
+        "risk:data-egress"
+      ],
+      "completion": {
+        "completed_by": "DEV-4",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-FRONTEND-002",
@@ -426,10 +817,25 @@
       "status": "ready",
       "milestone": "production-hardening",
       "estimate_points": 8,
-      "requirements": ["HUM-01", "HUM-02", "PLN-03"],
-      "acceptance_tests": ["AT-05", "AT-06", "AT-09"],
-      "paths": ["frontend/"],
-      "labels": ["owner:dev-4-product", "area:frontend", "status:ready", "type:feature"],
+      "requirements": [
+        "HUM-01",
+        "HUM-02",
+        "PLN-03"
+      ],
+      "acceptance_tests": [
+        "AT-05",
+        "AT-06",
+        "AT-09"
+      ],
+      "paths": [
+        "frontend/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:frontend",
+        "status:ready",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -441,10 +847,22 @@
       "status": "backlog",
       "milestone": "operator-pilot",
       "estimate_points": 8,
-      "requirements": ["VAL-01"],
-      "acceptance_tests": ["AT-12"],
-      "paths": ["backend/app/", "frontend/"],
-      "labels": ["owner:dev-4-product", "area:pilot", "status:backlog", "type:feature"],
+      "requirements": [
+        "VAL-01"
+      ],
+      "acceptance_tests": [
+        "AT-12"
+      ],
+      "paths": [
+        "backend/app/",
+        "frontend/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:pilot",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -456,10 +874,23 @@
       "status": "backlog",
       "milestone": "operator-pilot",
       "estimate_points": 5,
-      "requirements": ["VAL-02", "DEMO-01"],
-      "acceptance_tests": ["AT-12"],
-      "paths": ["backend/app/", "frontend/"],
-      "labels": ["owner:dev-4-product", "area:pilot", "status:backlog", "type:feature"],
+      "requirements": [
+        "VAL-02",
+        "DEMO-01"
+      ],
+      "acceptance_tests": [
+        "AT-12"
+      ],
+      "paths": [
+        "backend/app/",
+        "frontend/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:pilot",
+        "status:backlog",
+        "type:feature"
+      ],
       "completion": null
     },
     {
@@ -471,11 +902,26 @@
       "status": "done",
       "milestone": "skeleton-v1",
       "estimate_points": 5,
-      "requirements": ["ARC-01", "ARC-02"],
+      "requirements": [
+        "ARC-01",
+        "ARC-02"
+      ],
       "acceptance_tests": [],
-      "paths": ["README.md", "docs/"],
-      "labels": ["owner:dev-4-product", "area:docs", "status:done", "type:docs"],
-      "completion": {"completed_by": "DEV-4", "completed_on": "2026-09-18", "reference": "baseline:skeleton-v1"}
+      "paths": [
+        "README.md",
+        "docs/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:docs",
+        "status:done",
+        "type:docs"
+      ],
+      "completion": {
+        "completed_by": "DEV-4",
+        "completed_on": "2026-09-18",
+        "reference": "baseline:skeleton-v1"
+      }
     },
     {
       "id": "F-QA-001",
@@ -486,10 +932,26 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 2,
-      "requirements": ["PLN-04", "RPL-01", "AUD-01"],
-      "acceptance_tests": ["AT-06", "AT-07", "AT-08", "AT-09"],
-      "paths": ["backend/tests/"],
-      "labels": ["owner:dev-2-scheduling", "area:qa", "status:backlog", "type:test"],
+      "requirements": [
+        "PLN-04",
+        "RPL-01",
+        "AUD-01"
+      ],
+      "acceptance_tests": [
+        "AT-06",
+        "AT-07",
+        "AT-08",
+        "AT-09"
+      ],
+      "paths": [
+        "backend/tests/"
+      ],
+      "labels": [
+        "owner:dev-2-scheduling",
+        "area:qa",
+        "status:backlog",
+        "type:test"
+      ],
       "completion": null
     },
     {
@@ -501,10 +963,32 @@
       "status": "backlog",
       "milestone": "production-hardening",
       "estimate_points": 3,
-      "requirements": ["DAT-02", "AI-01", "DEP-01", "VAL-01"],
-      "acceptance_tests": ["AT-01", "AT-02", "AT-04", "AT-05", "AT-10", "AT-11", "AT-12", "AT-13"],
-      "paths": ["backend/tests/", "frontend/"],
-      "labels": ["owner:dev-4-product", "area:qa", "status:backlog", "type:test"],
+      "requirements": [
+        "DAT-02",
+        "AI-01",
+        "DEP-01",
+        "VAL-01"
+      ],
+      "acceptance_tests": [
+        "AT-01",
+        "AT-02",
+        "AT-04",
+        "AT-05",
+        "AT-10",
+        "AT-11",
+        "AT-12",
+        "AT-13"
+      ],
+      "paths": [
+        "backend/tests/",
+        "frontend/"
+      ],
+      "labels": [
+        "owner:dev-4-product",
+        "area:qa",
+        "status:backlog",
+        "type:test"
+      ],
       "completion": null
     }
   ]

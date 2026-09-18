@@ -9,7 +9,7 @@ venv:
 	python3 -m venv $(VENV)
 
 install:
-	$(PIP) install -e "$(BACKEND)[dev]"
+	$(PIP) install -e "$(BACKEND)[dev,solver]"
 
 dev:
 	cd $(BACKEND) && .venv/bin/uvicorn app.main:create_app --factory --reload --port 8000
