@@ -1,0 +1,32 @@
+# Ralphy Configuration
+# https://github.com/michaelshimeles/ralphy
+
+project:
+  name: "nebula26-engingers"
+  language: "Python"
+  framework: "FastAPI"
+  description: "Rail Access Optimisation and Replanning System (CP-SAT solver, React frontend)"
+
+commands:
+  test: "make test"
+  lint: "make lint"
+  build: "make web-build"
+
+rules:
+  - "Read AGENTS.md before modifying code"
+  - "Implement only the assigned task"
+  - "Prefer small changes"
+  - "Do not weaken tests to make them pass"
+  - "Run relevant tests before declaring completion"
+  - "Do not push or deploy"
+
+boundaries:
+  never_touch:
+    - ".git/**"
+    - ".env"
+    - ".env.*"
+    - "secrets/**"
+    - ".agent/flake.lock"
+
+capabilities:
+  browser: "auto"

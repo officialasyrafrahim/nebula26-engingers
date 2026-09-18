@@ -1,0 +1,227 @@
+# Ralphy parallel task list
+# Run with: ralphy --opencode --yaml tasks.yaml --parallel --max-parallel 3 --max-retries 2
+#
+# WAVES are dependency waves (from docs/team/WORK_ALLOCATION.md and the
+# dependency edges in docs/team/feature-registry.json).
+#
+# CONCURRENCY RULE: tasks in the same parallel_group must touch DISJOINT files.
+# Each task below lists "Allowed paths" and "Off limits". An agent that edits
+# outside its allowed paths can collide with a sibling agent and produce garbage
+# merges. Groups are sized <= 3 so every task in a group runs in the same batch.
+#
+# Group 1  backend compiler  |  deploy/docs  |  frontend timeline
+# Group 2  backend solver    |  backend validator  |  frontend diagnostics
+# Group 3  backend solver horizon growth
+# Group 4  scripts/CI/tests  |  backend explain
+#
+# Cross-wave overlap (e.g. engine.py in group 3 and group 4) is safe because a
+# group branches from the merged integration branch of the previous wave.
+#
+# Out of scope: F-VALIDATOR-004 is blocked on the official validator.
+# Bonus F-BONUS-001/002/003 do not start until the core sequence passes.
+
+tasks:
+  # ---------------------------------------------------------------- wave 1
+  - title: "F-COMPILER-002: Define the physical possession-slot domain contract"
+    description: |
+      Owner: DEV-1. Reviewer: DEV-2. Requirements: SCH-04..SCH-07. Tests: AT-05, AT-06.
+
+      Make physical possession slots an explicit, typed part of CompiledInstance.
+      Keep access_night contract/type-local. Physical slots represent cross-contract
+      simultaneity and become the shared interface for solver and validator.
+
+      Allowed paths:
+        backend/app/domain/rail/**
+        backend/app/modules/compiler/**
+        backend/tests/test_possession_slots.py
+      Off limits:
+        backend/app/modules/solver/**
+        backend/app/modules/validator/**
+        frontend/**
+        deploy/**
+      Agree the interface with DEV-2 before opening review. Add unit tests.
+    completed: false
+    parallel_group: 1
+
+  - title: "F-DEPLOY-002: Production frontend and hosted runbook"
+    description: |
+      Owner: DEV-4. Reviewer: DEV-3. Requirement: NFR-01. Test: AT-15.
+
+      Package a production frontend build so compose serves it, and document the
+      hosted upload-to-download flow with recovery steps.
+
+      Allowed paths:
+        deploy/**
+        frontend/Dockerfile
+        docs/**
+      Off limits:
+        backend/**
+        frontend/src/**
+      Do not touch solver or validator code.
+    completed: false
+    parallel_group: 1
+
+  - title: "F-TIMELINE-001: Finish schedule timeline and capacity hotspot views"
+    description: |
+      Owner: DEV-4. Reviewer: DEV-3. Requirement: UX-02. Test: AT-15.
+
+      Finish the in-review timeline and hotspot work so the dashboard renders the
+      solved schedule and capacity pressure.
+
+      Allowed paths:
+        frontend/src/components/ActivityTimeline.tsx
+        frontend/src/components/HotspotsPanel.tsx
+        frontend/src/components/ResultDashboard.tsx
+        frontend/src/components/EcloPanel.tsx
+        frontend/src/components/ContractTable.tsx
+        frontend/src/App.tsx
+        frontend/src/api/client.ts
+        frontend/src/api/types.ts
+        frontend/src/styles/**
+      Off limits:
+        frontend/src/components/ExplanationsPanel.tsx
+        frontend/src/components/ScorePanel.tsx
+        frontend/src/components/ViolationsPanel.tsx
+        frontend/src/components/ValidatorGate.tsx
+        backend/**
+        deploy/**
+      This is the only frontend agent in wave 1, so the shared entry points are
+      yours for this wave.
+    completed: false
+    parallel_group: 1
+
+  # ---------------------------------------------------------------- wave 2
+  - title: "F-SOLVER-007: Physical possession-slot closure and co-sharing constraints"
+    description: |
+      Owner: DEV-2. Reviewer: DEV-1. Requirements: SCH-04..SCH-07. Tests: AT-05, AT-06.
+
+      Replace equal local night numbers with the physical slots agreed in
+      F-COMPILER-002. Closures, mix rules, capacity and co-sharing must all use
+      physical slots. Do not change the compiler contract; consume it.
+
+      Allowed paths:
+        backend/app/modules/solver/**
+        backend/tests/test_solver_slots.py
+      Off limits:
+        backend/app/domain/rail/**
+        backend/app/modules/compiler/**
+        backend/app/modules/validator/**
+        frontend/**
+      Add regression tests. Do not weaken hard-feasibility checks.
+    completed: false
+    parallel_group: 2
+
+  - title: "F-VALIDATOR-003: Physical possession-slot fallback validation"
+    description: |
+      Owner: DEV-3. Reviewer: DEV-4. Requirements: SCH-04..SCH-07, VAL-02.
+      Tests: AT-05, AT-06, AT-12.
+
+      Apply the same physical-slot rules in fallback validation and add
+      cross-contract regression fixtures. Mirror F-SOLVER-007 semantics without
+      editing solver code.
+
+      Allowed paths:
+        backend/app/modules/validator/**
+        backend/tests/test_validator_fallback.py
+      Off limits:
+        backend/app/modules/solver/**
+        backend/app/domain/rail/**
+        backend/app/modules/compiler/**
+        frontend/**
+    completed: false
+    parallel_group: 2
+
+  - title: "F-EXPLAIN-002: Finish validator diagnostics and score dashboard"
+    description: |
+      Owner: DEV-4. Reviewer: DEV-3. Requirement: EXP-02. Test: AT-14.
+
+      Finish the in-review diagnostics, score and violations panels. Consume
+      stable reason codes only. Do not invent reason codes in the frontend.
+
+      Allowed paths:
+        frontend/src/components/ExplanationsPanel.tsx
+        frontend/src/components/ScorePanel.tsx
+        frontend/src/components/ViolationsPanel.tsx
+        frontend/src/components/ValidatorGate.tsx
+        frontend/src/App.tsx
+        frontend/src/api/types.ts
+        frontend/src/api/client.ts
+        frontend/src/styles/**
+      Off limits:
+        frontend/src/components/ActivityTimeline.tsx
+        frontend/src/components/HotspotsPanel.tsx
+        frontend/src/components/ResultDashboard.tsx
+        frontend/src/components/ContractTable.tsx
+        backend/**
+        deploy/**
+      Only frontend agent in wave 2; the shared entry points are yours.
+    completed: false
+    parallel_group: 2
+
+  # ---------------------------------------------------------------- wave 3
+  - title: "F-SOLVER-008: Adaptive horizon growth for congestion-safe completion"
+    description: |
+      Owner: DEV-2. Reviewer: DEV-1. Requirements: OPT-01, OPT-02. Tests: AT-08, AT-10.
+
+      Grow the horizon within the time budget so congestion is not reported as
+      proven infeasibility. Depends on the F-SOLVER-007 feasibility model.
+
+      Allowed paths:
+        backend/app/modules/solver/engine.py
+        backend/app/workers/rail_solver_worker.py
+        backend/tests/test_scenarios_abc.py
+      Off limits:
+        backend/app/modules/validator/**
+        backend/app/modules/compiler/**
+        frontend/**
+      Keep the time budget deterministic. Do not weaken hard constraints.
+    completed: false
+    parallel_group: 3
+
+  # ---------------------------------------------------------------- wave 4
+  - title: "F-QA-001: Public A/B/C answer generation and mandatory CI validation"
+    description: |
+      Owner: DEV-3. Reviewer: DEV-4. Requirements: OPT-01, OUT-04, VAL-02.
+      Tests: AT-08, AT-09, AT-10, AT-12, AT-13.
+
+      One command generates separate A/B/C outputs. CI fails on solve, schema,
+      workload or validation failure. Depends on F-SOLVER-007/008 and
+      F-VALIDATOR-003.
+
+      Allowed paths:
+        scripts/generate_public_answers.py
+        Makefile
+        .github/workflows/ci.yml
+        backend/tests/test_scenarios_abc.py
+        backend/tests/test_validator_fallback.py
+      Off limits:
+        backend/app/modules/solver/**
+        backend/app/domain/**
+        frontend/**
+        deploy/**
+      Keep the three scenario outputs as distinct answer keys.
+    completed: false
+    parallel_group: 4
+
+  - title: "F-EXPLAIN-001: Expand displacement evidence in the explanation engine"
+    description: |
+      Owner: DEV-4. Reviewer: DEV-3. Requirement: EXP-01. Test: AT-14.
+
+      Explanations must cite buffers, mirroring, interchange, mix, capacity and
+      co-sharing evidence for displaced work. Depends on stable reason codes from
+      F-SOLVER-007/008.
+
+      Allowed paths:
+        backend/app/modules/solver/engine.py
+        backend/app/modules/runs/service.py
+        backend/app/domain/schemas.py
+        backend/tests/test_explanations.py
+      Off limits:
+        backend/app/modules/solver/constraints.py
+        backend/app/modules/solver/variables.py
+        backend/app/modules/validator/**
+        scripts/**
+        Makefile
+      Do not hard-code explanations that reason codes cannot justify.
+    completed: false
+    parallel_group: 4
