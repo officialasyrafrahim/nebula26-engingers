@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rmis-backend"
+version = "0.1.0"
+description = "Rail Maintenance Intelligence System backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "pydantic>=2",
+    "pydantic-settings",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+solver = ["ortools"]
+events = ["redis"]
+postgres = ["psycopg[binary]"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "UP017", "UP042"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]

@@ -1,0 +1,98 @@
+name: Feature
+description: Delegate an ERD-linked capability to one developer lane
+title: "[Feature] "
+labels: ["type:feature", "status:ready"]
+body:
+  - type: input
+    id: feature_id
+    attributes:
+      label: Feature ID
+      description: Existing ID from docs/team/feature-registry.json
+      placeholder: F-PLAN-003
+    validations:
+      required: true
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Owner
+      options:
+        - DEV-1
+        - DEV-2
+        - DEV-3
+        - DEV-4
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - data
+        - condition
+        - model
+        - planning
+        - workflow
+        - platform
+        - integration
+        - security
+        - observability
+        - frontend
+        - assistant
+        - pilot
+        - docs
+        - qa
+    validations:
+      required: true
+  - type: input
+    id: erd
+    attributes:
+      label: ERD requirements
+      placeholder: PLN-01, PLN-02, PLN-03
+    validations:
+      required: true
+  - type: input
+    id: acceptance
+    attributes:
+      label: Acceptance scenarios
+      placeholder: AT-06, AT-07
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Intended outcome
+      description: State observable behavior, not an implementation preference.
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: Include success, failure and audit/fallback behavior where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and blockers
+      placeholder: None
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: Additional review risks
+      options:
+        - label: Safety-sensitive behavior (`risk:safety`)
+        - label: External data egress (`risk:data-egress`)
+        - label: Operator-system integration (`risk:integration`)
+        - label: Persisted data or deployment migration (`risk:migration`)
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Ready checklist
+      options:
+        - label: Registry owner and reviewer are assigned
+          required: true
+        - label: Requirement and acceptance IDs are traceable
+          required: true
+        - label: Dependencies are known
+          required: true
