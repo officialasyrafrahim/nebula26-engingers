@@ -10,6 +10,8 @@ import {
   formatChurnSummary,
   formatSlot,
   formatSlotList,
+  isReplanFullyReused,
+  isReplanSuccess,
   isReplanUsable,
   newDisruptionDraft,
   parseWeeks,
@@ -84,6 +86,65 @@ describe("replan status", () => {
     assert.equal(isReplanUsable({ status: "OPTIMAL", safe: false }), false);
     assert.equal(isReplanUsable({ status: "UNKNOWN", safe: true }), false);
     assert.equal(isReplanUsable(null), false);
+  });
+});
+
+describe("replan reuse gating", () => {
+  const fullyReused = diff({
+    totals: {
+      original_accesses: 8,
+      replan_accesses: 8,
+      reused_accesses: 8,
+      moved_accesses: 0,
+      moved_activities: 0,
+      unchanged_activities: 3,
+    },
+  });
+
+  it("is fully reused only when the reused count equals the original", () => {
+    assert.equal(isReplanFullyReused(fullyReused), true);
+    assert.equal(
+      isReplanFullyReused(
+        diff({
+          totals: {
+            ...fullyReused.totals,
+            reused_accesses: 7,
+          },
+        }),
+      ),
+      false,
+    );
+    assert.equal(isReplanFullyReused(null), false);
+  });
+
+  it("gates the success copy on usable and fully reused", () => {
+    assert.equal(
+      isReplanSuccess({ status: "OPTIMAL", safe: true, diff: fullyReused }),
+      true,
+    );
+  });
+
+  it("withholds success for an unsafe result even when nothing moved", () => {
+    assert.equal(
+      isReplanSuccess({ status: "UNSAFE", safe: false, diff: fullyReused }),
+      false,
+    );
+  });
+
+  it("withholds success when a usable replan still moved placements", () => {
+    const moved = diff({
+      moved: [{ activity_id: "A1", from: [[1, 1]], to: [[2, 2]] }],
+      newly_unsatisfiable: ["A9"],
+      totals: {
+        original_accesses: 8,
+        replan_accesses: 8,
+        reused_accesses: 6,
+        moved_accesses: 2,
+        moved_activities: 1,
+        unchanged_activities: 2,
+      },
+    });
+    assert.equal(isReplanSuccess({ status: "FEASIBLE", safe: true, diff: moved }), false);
   });
 });
 

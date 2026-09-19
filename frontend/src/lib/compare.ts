@@ -2,6 +2,10 @@
 // Every number is read from the persisted validator report (soft_scores and
 // detail). The capacity policy copy comes from the published scenario specs.
 // Nothing is recomputed or filled in: an absent scenario simply has no row.
+//
+// A, B and C optimise different objective formulas, so the projection never
+// ranks them. This module exposes no "best" or "leader" value and carries a
+// standing caveat that the numbers are not directly comparable.
 
 import type { Scenario, ValidatorReport } from "../api/types";
 import { scenarioSpec, type ScenarioSpec } from "./scenarios.ts";
@@ -30,19 +34,44 @@ export interface ScenarioCompareRow {
   priorityOverrun: Record<string, number>;
 }
 
-export type CompareMetric =
-  | "priorityWeightedOverrun"
-  | "excessAccessNights"
-  | "ecloNights"
-  | "capacityExcess";
+// The three scenarios are not a leaderboard. This copy is rendered beside the
+// table and is intentionally persistent for the life of the comparison.
+export const SCENARIO_COMPARISON_CAVEAT =
+  "Scenarios A, B and C optimise different objective formulas. Their numbers are not directly comparable and must not be ranked or read as a leaderboard. Read each scenario only against its own formula.";
+
+export interface ScenarioTradeoff {
+  scenario: Scenario;
+  title: string;
+  objective: string;
+  note: string;
+}
+
+export interface ScenarioComparisonCaveat {
+  rankable: false;
+  message: string;
+  tradeoffs: ScenarioTradeoff[];
+}
+
+export function buildComparisonCaveat(
+  rows: ScenarioCompareRow[],
+): ScenarioComparisonCaveat {
+  return {
+    rankable: false,
+    message: SCENARIO_COMPARISON_CAVEAT,
+    tradeoffs: rows.map((row) => ({
+      scenario: row.scenario,
+      title: row.spec.title,
+      objective: row.spec.objective,
+      note: `${row.spec.title} is tuned for its own formula. Read its figures as a trade-off within that formula, never as a rank against the other scenarios.`,
+    })),
+  };
+}
 
 export interface ScenarioCompareResult {
   rows: ScenarioCompareRow[];
   missing: Scenario[];
   canCompare: boolean;
-  // Lowest value per lower-is-better metric. Ties keep every scenario, and a
-  // metric with no evidence stays empty.
-  leaders: Record<CompareMetric, Scenario[]>;
+  caveat: ScenarioComparisonCaveat;
 }
 
 const SCENARIO_ORDER: Scenario[] = ["A", "B", "C"];
@@ -70,19 +99,6 @@ function toRow(entry: ScenarioCompareEntry): ScenarioCompareRow {
   };
 }
 
-function leadersFor(
-  rows: ScenarioCompareRow[],
-  metric: CompareMetric,
-): Scenario[] {
-  if (rows.length === 0) return [];
-  const values = rows.map((row) => row[metric]);
-  if (values.every((value) => !Number.isFinite(value))) return [];
-  const lowest = Math.min(...values.filter((value) => Number.isFinite(value)));
-  return rows
-    .filter((row) => Number.isFinite(row[metric]) && row[metric] === lowest)
-    .map((row) => row.scenario);
-}
-
 export function buildScenarioComparison(
   entries: ScenarioCompareEntry[],
 ): ScenarioCompareResult {
@@ -101,11 +117,6 @@ export function buildScenarioComparison(
     rows,
     missing,
     canCompare: rows.length >= 2,
-    leaders: {
-      priorityWeightedOverrun: leadersFor(rows, "priorityWeightedOverrun"),
-      excessAccessNights: leadersFor(rows, "excessAccessNights"),
-      ecloNights: leadersFor(rows, "ecloNights"),
-      capacityExcess: leadersFor(rows, "capacityExcess"),
-    },
+    caveat: buildComparisonCaveat(rows),
   };
 }

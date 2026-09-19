@@ -4,6 +4,41 @@ export function calendarMatches(selected: string, result: string, calendar: Poss
   return selected === result && calendar?.job_id === selected;
 }
 
+// Only the official authority may be presented as accepted validation. Any
+// other recorded authority, including the bundled fallback, is provisional and
+// must be acknowledged before publishing or exporting the calendar.
+export function isOfficialAuthority(authority: string | null | undefined): boolean {
+  return (authority ?? "").trim().toLowerCase() === "official";
+}
+
+export function isProvisionalAuthority(authority: string | null | undefined): boolean {
+  return !isOfficialAuthority(authority);
+}
+
+export interface CalendarAuthorityBadge {
+  provisional: boolean;
+  label: string;
+  warning: string;
+}
+
+export function calendarAuthorityBadge(
+  authority: string | null | undefined,
+): CalendarAuthorityBadge {
+  const provisional = isProvisionalAuthority(authority);
+  if (!provisional) {
+    return { provisional: false, label: "OFFICIAL", warning: "" };
+  }
+  return {
+    provisional: true,
+    label: "PROVISIONAL",
+    warning:
+      `Provisional: the validator authority is "${authority ?? "unknown"}". ` +
+      "This is fallback validation, not official acceptance. Confirm the " +
+      "acknowledgement before publishing dates or exporting ICS.",
+  };
+}
+
+
 // Opt-in presentation alias set from scripts/mapped_network.py. Raw IDs always remain visible.
 const stations: Record<string, Record<string, string>> = {
   ALP: { S01: "Newton", S02: "Little India", S03: "Rochor", S04: "Bugis", H01: "Promenade", H02: "Bayfront", S05: "Downtown", S06: "Telok Ayer", S07: "Chinatown", S08: "Fort Canning" },

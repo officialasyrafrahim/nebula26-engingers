@@ -1,4 +1,5 @@
 import type { ValidatorReport } from "../api/types";
+import { deriveAuthorityClaim } from "../lib/assurance";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
@@ -28,12 +29,27 @@ function GateCell({
 }
 
 export default function ValidatorGate({ report }: ValidatorGateProps) {
-  const ready = report.ready_for_submission;
-  const provisional = report.authority === "fallback";
+  const claim = deriveAuthorityClaim(report.authority, report.validator_source);
+  const disputed = claim.mismatch;
+  const provisional = claim.provisional;
+  const ready = report.ready_for_submission && !disputed;
   const violations = report.hard_violations.length;
-  const tone = ready ? (provisional ? "warn" : "ok") : "danger";
-  const banner = ready ? (provisional ? "provisional" : "open") : "blocked";
-  const bannerLabel = ready ? (provisional ? "Provisional" : "Ready for submission") : "Submission blocked";
+  const tone = disputed ? "danger" : ready ? (provisional ? "warn" : "ok") : "danger";
+  const banner = disputed ? "blocked" : ready ? (provisional ? "provisional" : "open") : "blocked";
+  const bannerLabel = disputed
+    ? "Validator authority disagreement"
+    : ready
+      ? provisional
+        ? "Provisional"
+        : "Ready for submission"
+      : "Submission blocked";
+  const bannerText = disputed
+    ? "DISPUTED"
+    : ready
+      ? provisional
+        ? "PROVISIONAL"
+        : "READY"
+      : "BLOCKED";
   return (
     <Panel
       title="Validator gate"
@@ -42,14 +58,25 @@ export default function ValidatorGate({ report }: ValidatorGateProps) {
       actions={
         <span className={`gate-banner gate-banner--${banner}`}>
           <SignalLamp
-            tone={ready ? (provisional ? "warn" : "ok") : "danger"}
+            tone={tone}
             pulse={ready && !provisional}
             label={bannerLabel}
           />
-          <span>{ready ? (provisional ? "PROVISIONAL" : "READY") : "BLOCKED"}</span>
+          <span>{bannerText}</span>
         </span>
       }
     >
+      {disputed ? (
+        <div className="notice notice--danger" role="alert">
+          <span className="notice__title">Validator authority disagreement</span>
+          <p>
+            The report claims authority &quot;{report.authority}&quot; but was
+            recorded by &quot;{report.validator_source}&quot;. The gate cannot be
+            treated as official, so submission is withheld.
+          </p>
+        </div>
+      ) : null}
+
       <ul className="gates" aria-label="Submission gate checks">
         <GateCell
           label="Feasible"
@@ -73,20 +100,28 @@ export default function ValidatorGate({ report }: ValidatorGateProps) {
           label="Ready for submission"
           passed={ready}
           detail={
-            ready
-              ? provisional
-                ? "Export enabled · provisional authority"
-                : "Export enabled · official authority"
-              : "Export withheld until gate passes"
+            disputed
+              ? "Withheld · validator authority disagreement"
+              : ready
+                ? provisional
+                  ? "Export enabled · provisional authority"
+                  : "Export enabled · official authority"
+                : "Export withheld until gate passes"
           }
         />
       </ul>
 
       <div className="gate-meta">
         <span>
-          Validation authority: <strong>{report.authority}</strong>
+          Validation authority: <strong>{report.authority}</strong> · recorded by{" "}
+          <strong>{report.validator_source}</strong>
         </span>
-        {provisional ? (
+        {disputed ? (
+          <span className="gate-meta__provisional">
+            Disputed: the claimed authority and the recorded source disagree, so no
+            official gate status can be claimed.
+          </span>
+        ) : provisional ? (
           <span className="gate-meta__provisional">
             Provisional: the official validator was not configured, so the bundled
             fallback interpreted the published rules. Fallback success is not

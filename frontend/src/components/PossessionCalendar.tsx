@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { downloadCalendar, getCalendar, listJobs, publishCalendar } from "../api/client";
 import type { CalendarPossession, PossessionCalendar as Calendar, ScenarioJob } from "../api/types";
-import { calendarMatches, compareCalendars, locationLabel } from "../lib/calendar";
+import { calendarAuthorityBadge, calendarMatches, compareCalendars, locationLabel } from "../lib/calendar";
 import ExplanationsPanel from "./ExplanationsPanel";
 import "../styles/calendar.css";
 
@@ -17,9 +17,10 @@ export default function PossessionCalendar({ runId, jobId }: { runId: string; jo
   const [compareId, setCompareId] = useState("");
   const [comparison, setComparison] = useState<Calendar | null>(null);
   const [compareError, setCompareError] = useState("");
+  const [provisionalAck, setProvisionalAck] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    setData(null); setSelected(null); setError(""); setDates({});
+    setData(null); setSelected(null); setError(""); setDates({}); setProvisionalAck(false);
     getCalendar(runId, jobId).then(value => {
       if (!cancelled && calendarMatches(jobId, jobId, value) && value.run_id === runId) {
         setData(value); setWeek(Math.min(...value.events.map(e => e.week)));
@@ -41,6 +42,9 @@ export default function PossessionCalendar({ runId, jobId }: { runId: string; jo
   const visible = data.events.filter(e => e.week === week);
   const weeks = [...new Set(data.events.map(e => e.week))].sort((a,b) => a-b);
   const slots = [...new Set(data.events.map(e => `${e.week}:${e.physical_night}`))];
+  const authority = calendarAuthorityBadge(data.validator_authority);
+  const provisional = authority.provisional;
+  const canPublish = !provisional || provisionalAck;
   const day = (offset: number) => new Date(Date.parse(data.horizon_start + "T00:00:00Z") + ((week-1)*7+offset)*86400000).toISOString().slice(0,10);
   const action = async (fn: () => Promise<void>) => {
     setBusy(true); setError("");
@@ -59,7 +63,16 @@ export default function PossessionCalendar({ runId, jobId }: { runId: string; jo
   return <section className="possession-calendar" aria-label="Validated possession calendar">
     <header className="calendar-header"><div><p className="calendar-eyebrow">OPERATIONS / SCENARIO {data.scenario}</p>
       <h2>Possession calendar</h2><p>One card per physical possession. Co-shared work stays together.</p></div>
-      <span className="calendar-badge">{data.status} · {data.validator_authority}</span></header>
+      <div className="calendar-header__badges">
+        <span className="calendar-badge">{data.status} · {data.validator_authority}</span>
+        {provisional ? <span className="calendar-badge calendar-badge--provisional">{authority.label}</span> : null}
+      </div></header>
+    {provisional ? (
+      <div className="calendar-authority-warning" role="alert">
+        <strong>PROVISIONAL</strong>
+        <span>{authority.warning}</span>
+      </div>
+    ) : null}
     <div className="calendar-stats"><div><strong>{data.events.length}</strong> possessions</div>
       <div><strong>{new Set(data.events.flatMap(e => e.activity_ids)).size}</strong> activities</div>
       <div><strong>{data.events.filter(e => e.eclo).length}</strong> ECLO possessions</div>
@@ -83,11 +96,23 @@ export default function PossessionCalendar({ runId, jobId }: { runId: string; jo
       <ExplanationsPanel explanations={selected.evidence} /></aside>}
     <details className="calendar-publish"><summary>Publication & ICS export</summary>
       <p>Version {data.schedule_version}. Export uses date-only events: operating start/end times are not in the witness.</p>
+      {provisional ? (
+        <label className="calendar-ack">
+          <input type="checkbox" checked={provisionalAck} onChange={e=>setProvisionalAck(e.target.checked)} />
+          <span>I acknowledge this calendar carries fallback (provisional) validation, not official acceptance, and I choose to publish or export it anyway.</span>
+        </label>
+      ) : null}
       {data.status === "VALIDATED" && <><p>Confirm each physical slot’s operating date within its planning week. Published bindings are immutable.</p>
         <div className="calendar-bindings">{slots.map(key => { const w=Number(key.split(":")[0]); const start=new Date(Date.parse(data.horizon_start+"T00:00:00Z")+(w-1)*7*86400000); return <label key={key}>Week {w} · physical night {key.split(":")[1]}
           <input type="date" value={dates[key] ?? ""} min={start.toISOString().slice(0,10)} max={new Date(+start+6*86400000).toISOString().slice(0,10)} onChange={e=>setDates({...dates,[key]:e.target.value})}/></label>; })}</div>
-        <button className="btn" disabled={busy || slots.some(k=>!dates[k])} onClick={()=>void action(async()=>setData(await publishCalendar(runId,jobId,dates)))}>Publish confirmed dates</button></>}
-      <button className="btn" disabled={busy || data.status !== "PUBLISHED"} onClick={()=>void action(()=>downloadCalendar(runId,jobId))}>Download ICS</button>
+        {provisional ? (
+          <p className="calendar-authority-warning calendar-authority-warning--inline" role="alert">Fallback validation, not official acceptance. Publishing stays disabled until the acknowledgement is ticked.</p>
+        ) : null}
+        <button className="btn" disabled={busy || slots.some(k=>!dates[k]) || !canPublish} onClick={()=>void action(async()=>setData(await publishCalendar(runId,jobId,dates)))}>Publish confirmed dates</button></>}
+      {provisional ? (
+        <p className="calendar-authority-warning calendar-authority-warning--inline" role="alert">ICS export under fallback validation is provisional and not official acceptance. Export stays disabled until the acknowledgement is ticked.</p>
+      ) : null}
+      <button className="btn" disabled={busy || data.status !== "PUBLISHED" || !canPublish} onClick={()=>void action(()=>downloadCalendar(runId,jobId))}>Download ICS</button>
       <p>Import the downloaded file into Outlook, Google Calendar or Apple Calendar. This does not connect or sync an account.</p></details>
     {error && <p role="alert">{error}</p>}
     <details className="calendar-compare"><summary>Compare another validated scenario</summary>

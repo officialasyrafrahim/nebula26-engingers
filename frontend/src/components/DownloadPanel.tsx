@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { ApiError, downloadBlob, exportZip } from "../api/client";
 import type { ValidatorReport } from "../api/types";
+import { deriveAuthorityClaim } from "../lib/assurance";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
@@ -21,8 +22,18 @@ export default function DownloadPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState<string | null>(null);
-  const ready = report.ready_for_submission;
-  const provisional = report.authority === "fallback";
+  const claim = deriveAuthorityClaim(report.authority, report.validator_source);
+  const provisional = claim.provisional;
+  const disputed = claim.mismatch;
+  const ready = report.ready_for_submission && !disputed;
+  const tone = disputed ? "danger" : ready ? (provisional ? "warn" : "ok") : "danger";
+  const gateLabel = disputed
+    ? "Export withheld: authority disagreement"
+    : ready
+      ? provisional
+        ? "Provisional export enabled"
+        : "Export enabled"
+      : "Export blocked";
 
   const download = async () => {
     setBusy(true);
@@ -48,33 +59,46 @@ export default function DownloadPanel({
     <Panel
       title="Submission export"
       eyebrow={`Stage 6 · Export · scenario ${scenario}`}
-      tone={ready ? (provisional ? "warn" : "ok") : "danger"}
+      tone={tone}
       actions={
         <span className="gate-inline">
           <SignalLamp
-            tone={ready ? (provisional ? "warn" : "ok") : "danger"}
+            tone={tone}
             size="sm"
-            label={
-              ready
-                ? provisional
-                  ? "Provisional export enabled"
-                  : "Export enabled"
-                : "Export blocked"
-            }
+            label={gateLabel}
           />
           <span>
-            {ready ? (provisional ? "provisional gate" : "gate open") : "gate blocked"}
+            {disputed
+              ? "authority disputed"
+              : ready
+                ? provisional
+                  ? "provisional gate"
+                  : "gate open"
+                : "gate blocked"}
           </span>
         </span>
       }
     >
       <p className="export__copy">
-        {ready
-          ? provisional
-            ? "The fallback validator gate has passed, so export is enabled. Download the per-scenario zip containing SCHEDULE_ACCESS.csv, SCHEDULE_OCCUPANCY.csv and RESULTS.csv."
-            : "The official validator gate has passed. Download the per-scenario zip containing SCHEDULE_ACCESS.csv, SCHEDULE_OCCUPANCY.csv and RESULTS.csv."
-          : "Export is withheld until the validator gate reports ready for submission. Resolve the hard violations above and re-dispatch the scenario."}
+        {disputed
+          ? "Export is withheld: the report's validator authority and the recorded source disagree, so no official gate status can be claimed. Do not treat this as an accepted submission."
+          : ready
+            ? provisional
+              ? "The fallback validator gate has passed, so export is enabled. Download the per-scenario zip containing SCHEDULE_ACCESS.csv, SCHEDULE_OCCUPANCY.csv and RESULTS.csv."
+              : "The official validator gate has passed. Download the per-scenario zip containing SCHEDULE_ACCESS.csv, SCHEDULE_OCCUPANCY.csv and RESULTS.csv."
+            : "Export is withheld until the validator gate reports ready for submission. Resolve the hard violations above and re-dispatch the scenario."}
       </p>
+
+      {disputed ? (
+        <div className="notice notice--danger" role="alert">
+          <span className="notice__title">Validator authority disagreement</span>
+          <p>
+            The report claims authority &quot;{report.authority}&quot; but was
+            recorded by &quot;{report.validator_source}&quot;. Export is withheld
+            rather than presenting a disputed result as official.
+          </p>
+        </div>
+      ) : null}
 
       {provisional ? (
         <p className="export__provisional">
@@ -107,11 +131,13 @@ export default function DownloadPanel({
           onClick={download}
           disabled={!ready || busy}
         >
-          {busy
-            ? "Preparing zip…"
-            : provisional
-              ? "Download provisional zip"
-              : "Download submission zip"}
+          {disputed
+            ? "Export withheld"
+            : busy
+              ? "Preparing zip…"
+              : provisional
+                ? "Download provisional zip"
+                : "Download submission zip"}
         </button>
       </div>
     </Panel>

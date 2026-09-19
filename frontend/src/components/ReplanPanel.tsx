@@ -13,6 +13,7 @@ import {
   describeDisruption,
   DISRUPTION_KIND_LABEL,
   formatChurnSummary,
+  isReplanSuccess,
   isReplanUsable,
   newDisruptionDraft,
   newReplanOptions,
@@ -365,6 +366,7 @@ function ReplanOutcome({ replan }: { replan: ReplanRead }) {
   const impact = summariseImpact(replan.impact);
   const moved = projectMoved(replan.diff);
   const usable = isReplanUsable(replan);
+  const success = isReplanSuccess(replan);
   const status = classifyReplanStatus(replan.status);
   const reasons = replan.result?.infeasibility_reasons ?? [];
   const composed = replan.disruption ?? [];
@@ -533,9 +535,14 @@ function ReplanOutcome({ replan }: { replan: ReplanRead }) {
               </tbody>
             </table>
           </div>
-        ) : (
+        ) : success ? (
           <p className="empty empty--ok">
             No activity moved. Every original placement was reused.
+          </p>
+        ) : (
+          <p className="empty">
+            No activity moved, but this replan is not usable, so no reuse
+            success is claimed. The withheld state above stands.
           </p>
         )}
 

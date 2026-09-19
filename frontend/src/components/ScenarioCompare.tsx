@@ -1,11 +1,9 @@
 import { formatNumber, formatScore } from "../lib/format";
 import {
   buildScenarioComparison,
-  type CompareMetric,
   type ScenarioCompareEntry,
   type ScenarioCompareRow,
 } from "../lib/compare";
-import type { Scenario } from "../api/types";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
@@ -17,34 +15,15 @@ interface ScenarioCompareProps {
   onLoadOthers?: () => void;
 }
 
-const METRIC_LABELS: Record<CompareMetric, string> = {
-  priorityWeightedOverrun: "Priority-weighted overrun",
-  excessAccessNights: "Excess access-nights",
-  ecloNights: "ECLO nights",
-  capacityExcess: "Capacity excess",
-};
-
-function bestClass(
-  row: ScenarioCompareRow,
-  metric: CompareMetric,
-  leaders: Record<CompareMetric, Scenario[]>,
-): string {
-  return leaders[metric].includes(row.scenario) ? " compare__cell--best" : "";
-}
-
 function MetricRow({
   label,
   hint,
   rows,
-  leaders,
-  metric,
   render,
 }: {
   label: string;
   hint?: string;
   rows: ScenarioCompareRow[];
-  leaders: Record<CompareMetric, Scenario[]>;
-  metric: CompareMetric;
   render: (row: ScenarioCompareRow) => string;
 }) {
   return (
@@ -54,13 +33,8 @@ function MetricRow({
         {hint ? <span className="compare__hint">{hint}</span> : null}
       </th>
       {rows.map((row) => (
-        <td key={row.scenario} className={`compare__cell${bestClass(row, metric, leaders)}`}>
+        <td key={row.scenario} className="compare__cell">
           {render(row)}
-          {leaders[metric].includes(row.scenario) ? (
-            <span className="compare__lead" title={`Lowest ${label.toLowerCase()}`}>
-              lowest
-            </span>
-          ) : null}
         </td>
       ))}
     </tr>
@@ -130,21 +104,29 @@ export default function ScenarioCompare({
             validator reports and never recomputes a scenario here.
           </p>
 
-          <div className="compare__leaders" aria-label="Trade-off leaders">
-            {(Object.keys(METRIC_LABELS) as CompareMetric[]).map((metric) => {
-              const leaders = comparison.leaders[metric];
-              return (
-                <span key={metric} className="compare__leader-chip">
-                  <span className="compare__leader-label">
-                    {METRIC_LABELS[metric]}
-                  </span>
-                  <strong>
-                    {leaders.length > 0 ? leaders.map((s) => `Scenario ${s}`).join(", ") : "no data"}
-                  </strong>
-                </span>
-              );
-            })}
+          <div className="notice notice--warn compare__caveat" role="note">
+            <span className="notice__title">
+              Different objective formulas · not a ranking
+            </span>
+            <p>{comparison.caveat.message}</p>
           </div>
+
+          <ul
+            className="compare__tradeoffs"
+            aria-label="Each scenario's own trade-off"
+          >
+            {comparison.caveat.tradeoffs.map((tradeoff) => (
+              <li key={tradeoff.scenario} className="compare__tradeoff">
+                <span className="compare__tradeoff-label">
+                  {tradeoff.title}
+                </span>
+                <span className="compare__tradeoff-objective">
+                  {tradeoff.objective}
+                </span>
+                <span className="compare__tradeoff-note">{tradeoff.note}</span>
+              </li>
+            ))}
+          </ul>
 
           <div className="table-wrap">
             <table className="table compare">
@@ -185,8 +167,6 @@ export default function ScenarioCompare({
                 <MetricRow
                   label="Priority-weighted overrun"
                   rows={comparison.rows}
-                  leaders={comparison.leaders}
-                  metric="priorityWeightedOverrun"
                   render={(row) => formatScore(row.priorityWeightedOverrun)}
                 />
                 <tr>
@@ -201,16 +181,12 @@ export default function ScenarioCompare({
                 <MetricRow
                   label="Excess access-nights"
                   rows={comparison.rows}
-                  leaders={comparison.leaders}
-                  metric="excessAccessNights"
                   render={(row) => formatNumber(row.excessAccessNights)}
                 />
                 <MetricRow
                   label="ECLO nights"
                   hint="soft score and report detail"
                   rows={comparison.rows}
-                  leaders={comparison.leaders}
-                  metric="ecloNights"
                   render={(row) => `${formatNumber(row.ecloNights)}`}
                 />
                 <tr>
@@ -266,9 +242,10 @@ export default function ScenarioCompare({
           </div>
 
           <p className="compare__foot">
-            Lower is better for the highlighted rows. Capacity policy text is the
-            published scenario copy; every number is read from the validator
-            <code> soft_scores</code> and <code>detail</code> fields.
+            Every figure is read from the persisted validator
+            <code> soft_scores</code> and <code>detail</code> fields and shown
+            without a winner or a rank. Capacity policy text is the published
+            scenario copy.
           </p>
         </>
       ) : null}

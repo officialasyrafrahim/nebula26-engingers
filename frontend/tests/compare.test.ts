@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import type { Scenario, ValidatorReport } from "../src/api/types.ts";
 import {
+  buildComparisonCaveat,
   buildScenarioComparison,
+  SCENARIO_COMPARISON_CAVEAT,
   type ScenarioCompareEntry,
 } from "../src/lib/compare.ts";
 
@@ -97,24 +99,50 @@ describe("buildScenarioComparison", () => {
     assert.equal(c.spec.id, "C");
   });
 
-  it("marks the lowest value per lower-is-better metric", () => {
+  it("never exposes a leader or best-value ranking", () => {
     const result = buildScenarioComparison([
       entry("A", { priorityWeightedScore: 10, excess: 5, eclo: 0 }),
       entry("B", { priorityWeightedScore: 20, excess: 1, eclo: 8 }),
       entry("C", { priorityWeightedScore: 15, excess: 3, eclo: 2 }),
     ]);
-    assert.deepEqual(result.leaders.priorityWeightedOverrun, ["A"]);
-    assert.deepEqual(result.leaders.excessAccessNights, ["B"]);
-    assert.deepEqual(result.leaders.ecloNights, ["A"]);
+    assert.equal(result.caveat.rankable, false);
+    // No leader or "best" value may be exposed anywhere on the result.
+    assert.equal("leaders" in result, false);
   });
 
-  it("keeps every scenario on a tie", () => {
+  it("carries a persistent caveat that the formulas are incomparable", () => {
     const result = buildScenarioComparison([
-      entry("A", { priorityWeightedScore: 10, excess: 2, eclo: 1 }),
-      entry("B", { priorityWeightedScore: 10, excess: 2, eclo: 1 }),
+      entry("A", { priorityWeightedScore: 10, excess: 5, eclo: 0 }),
+      entry("B", { priorityWeightedScore: 20, excess: 1, eclo: 8 }),
     ]);
-    assert.deepEqual(result.leaders.priorityWeightedOverrun, ["A", "B"]);
-    assert.deepEqual(result.leaders.excessAccessNights, ["A", "B"]);
-    assert.deepEqual(result.leaders.ecloNights, ["A", "B"]);
+    assert.equal(result.caveat.message, SCENARIO_COMPARISON_CAVEAT);
+    assert.match(result.caveat.message, /different objective formulas/i);
+    assert.match(result.caveat.message, /not directly comparable/i);
+    assert.match(result.caveat.message, /not be ranked|leaderboard/i);
+    assert.equal(result.caveat.rankable, false);
+  });
+
+  it("describes each scenario's own trade-off without naming a winner", () => {
+    const result = buildScenarioComparison([
+      entry("A", { priorityWeightedScore: 10, excess: 5, eclo: 0 }),
+      entry("C", { priorityWeightedScore: 15, excess: 3, eclo: 2 }),
+    ]);
+    assert.deepEqual(
+      result.caveat.tradeoffs.map((tradeoff) => tradeoff.scenario),
+      ["A", "C"],
+    );
+    for (const tradeoff of result.caveat.tradeoffs) {
+      assert.match(tradeoff.note, /own formula/i);
+      assert.match(tradeoff.objective, /Minimise/);
+      assert.doesNotMatch(tradeoff.note, /best|winner|leads/i);
+    }
+  });
+
+  it("builds the same caveat directly from rows", () => {
+    const result = buildScenarioComparison([
+      entry("A", { priorityWeightedScore: 10, excess: 5, eclo: 0 }),
+      entry("B", { priorityWeightedScore: 20, excess: 1, eclo: 8 }),
+    ]);
+    assert.deepEqual(buildComparisonCaveat(result.rows), result.caveat);
   });
 });

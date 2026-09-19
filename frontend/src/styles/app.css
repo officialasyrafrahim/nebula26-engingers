@@ -740,6 +740,10 @@ code {
   color: var(--green);
 }
 
+.empty--warn {
+  color: var(--amber);
+}
+
 /* -------------------------------------------------------------- upload */
 
 .dropzone {
@@ -3062,24 +3066,32 @@ button.tonight__activity:hover {
   color: var(--ink-dim);
 }
 
-.compare__leaders {
+.compare__caveat {
+  margin-top: 10px;
+}
+
+.compare__tradeoffs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.compare__leader-chip {
-  display: inline-flex;
+.compare__tradeoff {
+  display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 6px 10px;
+  gap: 2px;
+  flex: 1 1 220px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
   border-left: 3px solid var(--amber);
   border-radius: var(--radius-sm);
   background: var(--panel-sunken);
 }
 
-.compare__leader-label {
+.compare__tradeoff-label {
   font-family: var(--font-mono);
   font-size: 0.62rem;
   letter-spacing: 0.06em;
@@ -3087,27 +3099,14 @@ button.tonight__activity:hover {
   color: var(--ink-faint);
 }
 
-.compare__leader-chip strong {
-  font-family: var(--font-mono);
+.compare__tradeoff-objective {
   font-size: 0.78rem;
-  color: var(--amber);
+  color: var(--ink);
 }
 
-.compare__cell--best {
-  background: rgba(53, 208, 127, 0.08);
-}
-
-.compare__lead {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 0 5px;
-  border: 1px solid var(--green-dim);
-  border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--green);
+.compare__tradeoff-note {
+  font-size: 0.68rem;
+  color: var(--ink-faint);
 }
 
 .compare__hint {

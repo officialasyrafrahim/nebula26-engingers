@@ -1,20 +1,12 @@
 import type { Authority, HardViolation } from "../api/types";
+import { deriveAuthorityClaim, violationCleanSummary } from "../lib/assurance";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
 interface ViolationsPanelProps {
   violations: HardViolation[];
   authority?: Authority | string;
-}
-
-function cleanSummary(authority?: Authority | string): string {
-  if (authority === "fallback") {
-    return "The fallback validator found no hard-rule violations. This is a provisional interpretation of the published rules, not physical proof or official acceptance.";
-  }
-  if (authority === "official") {
-    return "The official validator found no hard-rule violations. The schedule is clean under the official authority.";
-  }
-  return "No hard-rule violations reported.";
+  validatorSource?: Authority | string | null;
 }
 
 const RULE_LABELS: Record<string, string> = {
@@ -36,7 +28,9 @@ const RULE_LABELS: Record<string, string> = {
 export default function ViolationsPanel({
   violations,
   authority,
+  validatorSource,
 }: ViolationsPanelProps) {
+  const claim = deriveAuthorityClaim(authority ?? "", validatorSource);
   const grouped = new Map<string, HardViolation[]>();
   for (const violation of violations) {
     const bucket = grouped.get(violation.rule) ?? [];
@@ -44,17 +38,27 @@ export default function ViolationsPanel({
     grouped.set(violation.rule, bucket);
   }
 
+  const clean = violations.length === 0;
+  const tone = !clean ? "danger" : claim.official ? "ok" : "warn";
+  const standingLabel = claim.mismatch
+    ? "Authority disagreement · not official"
+    : claim.provisional
+      ? "Provisional · no official cleanliness"
+      : claim.official
+        ? "No violations"
+        : "Disputed standing";
+
   return (
     <Panel
       title="Hard violations"
       eyebrow="Rule breaches block submission"
-      tone={violations.length > 0 ? "danger" : "ok"}
+      tone={tone}
       actions={
         <span className="gate-inline">
           <SignalLamp
-            tone={violations.length > 0 ? "danger" : "ok"}
+            tone={!clean ? "danger" : claim.official ? "ok" : "warn"}
             size="sm"
-            label={violations.length > 0 ? "Violations present" : "No violations"}
+            label={!clean ? "Violations present" : standingLabel}
           />
           <span>
             {violations.length} {violations.length === 1 ? "breach" : "breaches"}
@@ -62,8 +66,10 @@ export default function ViolationsPanel({
         </span>
       }
     >
-      {violations.length === 0 ? (
-        <p className="empty empty--ok">{cleanSummary(authority)}</p>
+      {clean ? (
+        <p className={`empty ${claim.official ? "empty--ok" : "empty--warn"}`}>
+          {violationCleanSummary(claim)}
+        </p>
       ) : (
         <div className="violations">
           {[...grouped.entries()].map(([rule, items]) => (

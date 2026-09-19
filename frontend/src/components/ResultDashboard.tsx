@@ -74,6 +74,7 @@ export default function ResultDashboard({
         <ViolationsPanel
           violations={report.hard_violations}
           authority={report.authority}
+          validatorSource={report.validator_source}
         />
 
         <HotspotsPanel

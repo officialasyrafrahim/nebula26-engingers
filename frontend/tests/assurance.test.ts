@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { checkDetailText, deriveAssurance } from "../src/lib/assurance.ts";
+import { checkDetailText, deriveAssurance, deriveAuthorityClaim, violationCleanSummary } from "../src/lib/assurance.ts";
 
 describe("checkDetailText", () => {
   it("shows soft capacity excess when there are no hard violations", () => {
@@ -143,5 +143,66 @@ describe("deriveAssurance", () => {
     assert.equal(outcome.status, "NOT VALIDATED");
     assert.equal(outcome.official, "fail");
     assert.deepEqual(outcome.failingLayers, ["official validation"]);
+  });
+});
+
+describe("deriveAuthorityClaim", () => {
+  it("grants official standing only to a matching official claim", () => {
+    const claim = deriveAuthorityClaim("official", "official");
+    assert.equal(claim.standing, "official");
+    assert.equal(claim.official, true);
+    assert.equal(claim.provisional, false);
+    assert.equal(claim.mismatch, false);
+  });
+
+  it("treats a matching fallback claim as provisional, never official", () => {
+    const claim = deriveAuthorityClaim("fallback", "fallback");
+    assert.equal(claim.standing, "provisional");
+    assert.equal(claim.official, false);
+    assert.equal(claim.provisional, true);
+  });
+
+  it("disputes a claim when the recorded source disagrees", () => {
+    const claimedOfficial = deriveAuthorityClaim("official", "fallback");
+    assert.equal(claimedOfficial.standing, "disputed");
+    assert.equal(claimedOfficial.mismatch, true);
+    assert.equal(claimedOfficial.official, false);
+    assert.equal(claimedOfficial.provisional, false);
+
+    const claimedFallback = deriveAuthorityClaim("fallback", "official");
+    assert.equal(claimedFallback.standing, "disputed");
+    assert.equal(claimedFallback.mismatch, true);
+  });
+
+  it("disputes an unrecognised authority", () => {
+    const claim = deriveAuthorityClaim("mystery", "mystery");
+    assert.equal(claim.standing, "disputed");
+    assert.equal(claim.official, false);
+    assert.equal(claim.provisional, false);
+    assert.equal(claim.mismatch, false);
+  });
+
+  it("falls back to the authority as the source when none is recorded", () => {
+    assert.equal(deriveAuthorityClaim("official").source, "official");
+    assert.equal(deriveAuthorityClaim("fallback", null).source, "fallback");
+  });
+});
+
+describe("violationCleanSummary", () => {
+  it("never claims official cleanliness on an authority mismatch", () => {
+    const text = violationCleanSummary(deriveAuthorityClaim("official", "fallback"));
+    assert.match(text, /disagree/i);
+    assert.doesNotMatch(text, /official validator found no hard-rule violations/i);
+  });
+
+  it("keeps a fallback clean result provisional", () => {
+    const text = violationCleanSummary(deriveAuthorityClaim("fallback", "fallback"));
+    assert.match(text, /provisional/i);
+    assert.doesNotMatch(text, /clean under the official authority/i);
+  });
+
+  it("reserves the official clean claim for official authority", () => {
+    const text = violationCleanSummary(deriveAuthorityClaim("official", "official"));
+    assert.match(text, /official validator found no hard-rule violations/i);
   });
 });

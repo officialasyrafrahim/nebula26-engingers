@@ -73,6 +73,24 @@ export function isReplanUsable(
   return replan.safe === true && classifyReplanStatus(replan.status) === "feasible";
 }
 
+// A usable replan may still move placements. The "every original placement was
+// reused" success copy is only honest when the reused count equals the original
+// count, so it can never sit beside a withheld or unsafe outcome.
+export function isReplanFullyReused(
+  diff: ReplanDiff | null | undefined,
+): boolean {
+  if (!diff) return false;
+  const summary = summariseDiff(diff);
+  return summary.reusedAccesses === summary.originalAccesses;
+}
+
+// The only condition under which the diff may show the green success message.
+export function isReplanSuccess(
+  replan: Pick<ReplanRead, "status" | "safe" | "diff"> | null | undefined,
+): boolean {
+  return isReplanUsable(replan) && isReplanFullyReused(replan?.diff);
+}
+
 // ------------------------------------------------------------------ diff
 
 export interface ReplanDiffSummary {
