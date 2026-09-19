@@ -20,6 +20,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: ${DB_MEMORY:-4g}
     restart: unless-stopped
 
   redis:
@@ -34,6 +35,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    mem_limit: ${REDIS_MEMORY:-1g}
     restart: unless-stopped
 
   api:
@@ -52,6 +54,11 @@ services:
       RAO_SOLVER_TIME_LIMIT_SECONDS: ${RAO_SOLVER_TIME_LIMIT_SECONDS:-300}
       RAO_SOLVER_SEED: ${RAO_SOLVER_SEED:-42}
       RAO_HORIZON_EXTENSION_WEEKS: ${RAO_HORIZON_EXTENSION_WEEKS:-6}
+      # Optional LTA DataMall advisory context (api only). Empty disables it and
+      # makes no outbound request. The key is never returned to the browser.
+      LTA_DATAMALL_ACCOUNT_KEY: ${LTA_DATAMALL_ACCOUNT_KEY:-}
+    cpus: ${API_CPUS:-4}
+    mem_limit: ${API_MEMORY:-4g}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
       interval: 10s
@@ -82,6 +89,11 @@ services:
       # Empty selects the fallback oracle. The official validator is NOT shipped;
       # put it in deploy/validator and point this at its container path.
       RAO_VALIDATOR_COMMAND: ${RAO_VALIDATOR_COMMAND:-}
+    # The solver is the CPU/ memory heavy service. CP-SAT scales across cores,
+    # so the worker gets the largest share by default (host has 32 cores).
+    cpus: ${WORKER_CPUS:-28}
+    mem_limit: ${WORKER_MEMORY:-36g}
+    mem_reservation: ${WORKER_MEMORY_RESERVATION:-8g}
     volumes:
       # Optional official validator, mounted read-only in the worker only.
       # The image does not contain a validator.
@@ -104,8 +116,13 @@ services:
     environment:
       # Upstream for the nginx /api and /healthz proxy locations.
       RAO_API_UPSTREAM: ${RAO_API_UPSTREAM:-api:8000}
+      # Container DNS nginx uses to re-resolve the upstream after an api
+      # recreation. Docker: 127.0.0.11. Podman: the network gateway.
+      RAO_DNS_RESOLVER: ${RAO_DNS_RESOLVER:-127.0.0.11}
     ports:
       - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HOST_PORT:-5173}:80"
+    cpus: ${WEB_CPUS:-2}
+    mem_limit: ${WEB_MEMORY:-512m}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
       interval: 10s

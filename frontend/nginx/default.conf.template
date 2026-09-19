@@ -5,6 +5,13 @@ server {
     listen 80;
     server_name _;
 
+    # Resolve the api service through the container DNS with a short TTL so a
+    # recreated api container can never leave nginx pinned to a stale IP.
+    # The resolver is platform specific: Docker uses 127.0.0.11, Podman uses
+    # the network gateway (for example 10.89.0.1).
+    resolver ${RAO_DNS_RESOLVER} valid=10s ipv6=off;
+    set $rao_api http://${RAO_API_UPSTREAM};
+
     root /usr/share/nginx/html;
     index index.html;
 
@@ -14,7 +21,7 @@ server {
 
     # API and health stay same-origin so the built bundle needs no CORS.
     location /api/ {
-        proxy_pass http://${RAO_API_UPSTREAM};
+        proxy_pass $rao_api;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -25,7 +32,7 @@ server {
     }
 
     location = /healthz {
-        proxy_pass http://${RAO_API_UPSTREAM}/healthz;
+        proxy_pass $rao_api/healthz;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
     }

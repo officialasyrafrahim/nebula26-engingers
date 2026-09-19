@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
@@ -28,7 +29,12 @@ from app.modules.export.schemas import (
     render_occupancy,
     render_results,
 )
-from app.modules.solver.results import SolverResult
+# Import only for type checking. A runtime import here creates a cycle:
+# export.bundle -> solver package -> solver.engine -> validator package ->
+# validator.fallback_validator -> export.bundle. The annotation below is lazy
+# because this module uses ``from __future__ import annotations``.
+if TYPE_CHECKING:
+    from app.modules.solver.results import SolverResult
 
 
 class SubmissionBundle(BaseModel):

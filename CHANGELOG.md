@@ -4,8 +4,9 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
-- Add the physical possession calendar as a seventh workflow stage: a fail-closed projection of an assured job with versioned publication and date-only ICS export.
-  - Ported from `RAO_Possession_Calendar_Project` (additive patch based on commit `46abcf8`), re-applied by hand onto this diverged branch.
+- Break a circular import that crash-looped the solver worker container and add a fresh-interpreter guard.
+- Re-resolve the nginx api upstream so recreating the api container cannot 502 the site.
+- Add container CPU and memory allocations and DataMall key wiring to the Compose stack.
 - Add what-if sandbox and deterministic schedule query panels to the result view.
 - Add an instance inspection CLI, Windows helpers and a repository hygiene audit.
 - Add fragility and what-if sandboxing plus a deterministic schedule query backend.
