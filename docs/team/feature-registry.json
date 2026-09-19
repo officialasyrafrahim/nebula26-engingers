@@ -1510,7 +1510,8 @@
       "estimate_points": 13,
       "requirements": [
         "INP-01",
-        "INP-02"
+        "INP-02",
+        "INP-03"
       ],
       "acceptance_tests": [
         "AT-01",

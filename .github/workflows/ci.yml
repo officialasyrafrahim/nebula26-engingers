@@ -58,3 +58,12 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production Compose configuration
+        run: docker compose -f deploy/docker-compose.yml config
+      - name: Build production frontend image
+        run: docker build -t rao-web:ci frontend

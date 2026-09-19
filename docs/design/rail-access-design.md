@@ -569,7 +569,7 @@ Gate logic:
 
 ## 13. Persistence And API Contracts
 
-Persistence uses SQLAlchemy 2.x, PostgreSQL 16 in production and SQLite in dev/tests. There are no legacy RMIS tables: the schema is exactly the rail tables below, created with `Base.metadata.create_all` (no migrations; start from a fresh database).
+Persistence uses SQLAlchemy 2.x, PostgreSQL 16 in production and SQLite in dev/tests. There are no legacy RMIS tables: the schema is exactly the rail tables below, created with `Base.metadata.create_all`. A concurrency-safe additive upgrade then adds the nullable `physical_night` column to `schedule_access_rows` on volumes created before `v0.3.0`; there is no migration framework, and the upgrade is idempotent so the API and the worker can start together. A legacy RMIS volume remains incompatible and must be reset.
 
 Tables:
 

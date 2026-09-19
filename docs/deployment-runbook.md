@@ -28,8 +28,10 @@ port.
 
 - Docker Engine with Compose v2.
 - Ports `5173` (UI) and `8000` (loopback API) free on the host.
-- A database volume writable by the API. Startup creates missing tables and adds
-  the nullable `physical_night` column to volumes created by `v0.3.0`.
+- A database volume writable by the API. Startup creates missing tables and runs
+  an idempotent, concurrency-safe additive upgrade that adds the nullable
+  `physical_night` column to volumes created by `v0.3.0`. The API and the worker
+  can start together; there is no migration framework.
 - For a public URL, a DNS name and HTTPS reverse proxy on ports 80/443.
 
 ## Configure

@@ -25,6 +25,10 @@ deploy/.env
 node_modules/
 frontend/dist/
 
+# Distributable archives (may embed .venv, node_modules and deploy/.env)
+*.zip
+RAO-main.zip
+
 # Official validator drop-in (not shipped); keep the README.
 deploy/validator/*
 !deploy/validator/README.md

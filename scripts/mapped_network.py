@@ -1,16 +1,21 @@
 """Static DTL/CCL topology tables and ALP/BET mapping helpers (F-DATA-001).
 
-Provenance: the station orders and interchange identities below are the public
-LTA Downtown Line and Circle Line topologies, current as of September 2026. The
-generator maps the problem-statement identifiers onto them without changing the
-solver's own identifiers:
+Provenance: the station names and their order are an unverified presentation
+mapping of the public LTA Downtown Line and Circle Line. They have not been
+checked against a retrieved authoritative LTA dataset, so they must be treated
+as a presentation label rather than an operational reference. The generator
+maps the problem-statement identifiers onto them without changing the solver's
+own identifiers:
 
     ALP -> DTL city segment (Newton .. Fort Canning)
     BET -> CCL segment      (Dakota .. Keppel)
 
-Every capacity, programme, workfront and access allocation produced by
-``generate_mapped_instance.py`` is synthetic and follows PS1 rules only. This
-module holds no demand data; it is pure public topology plus mapping helpers.
+The interchange is physically two adjacent tunnels, one per line, each with
+independent capacity. Both H01_H02 sectors therefore carry ``is_shared=0``, to
+match the published public instance. Every capacity, programme, workfront and
+access allocation produced by ``generate_mapped_instance.py`` is synthetic and
+follows PS1 rules only. This module holds no demand data; it is a presentation
+mapping plus mapping helpers.
 """
 
 from __future__ import annotations
@@ -159,13 +164,19 @@ def station_rows() -> tuple[tuple[str, str, int, int], ...]:
 
 
 def sector_rows() -> tuple[tuple[str, str, str, str, int, int], ...]:
-    """Rows for ``03_SECTORS.csv``; the H01_H02 tunnel is marked shared."""
+    """Rows for ``03_SECTORS.csv``; H01_H02 stays per line, never shared.
+
+    ``PS1_README`` describes the interchange as two physically separate tunnels
+    with independent line capacity, and the published public instance sets
+    ``is_shared=0`` for both H01_H02 sectors. The mapped topology matches that
+    semantics, so ``is_shared`` is always 0 here.
+    """
 
     rows: list[tuple[str, str, str, str, int, int]] = []
     for line_code in LINE_CODES:
         base = SECTOR_SEQ_BASE[line_code]
         for index, (from_station, to_station) in enumerate(sector_pairs(line_code)):
-            shared = int((from_station, to_station) == INTERCHANGE_SECTOR)
+            shared = 0
             rows.append(
                 (
                     sector_id(line_code, from_station, to_station),

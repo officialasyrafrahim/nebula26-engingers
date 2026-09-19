@@ -86,7 +86,7 @@ make down
 
 Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, and `web` (built SPA served by nginx on <http://localhost:5173>, proxying `/api` and `/healthz`). There is no TimescaleDB and no MinIO. See `docs/deployment-runbook.md` for the operator flow and recovery steps.
 
-**Fresh database required.** Tables are created with `Base.metadata.create_all`; there are no migrations. A database or volume created by the legacy RMIS stack is not compatible — start from a fresh volume, for example `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
+**Supported additive schema upgrade.** Tables are created at startup with `Base.metadata.create_all`, and a concurrency-safe additive step adds the nullable `physical_night` column to `schedule_access_rows` on volumes created before `v0.3.0`. The upgrade is idempotent, so the API and the worker can start together without a migration framework. A database or volume created by the legacy RMIS stack is still not compatible; if it cannot start after the additive upgrade, reset the volume with `docker compose -f deploy/docker-compose.yml down -v` before `make up`.
 
 ### Hosted web app
 

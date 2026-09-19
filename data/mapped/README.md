@@ -8,19 +8,22 @@ canonical model.
 
 ## Provenance and honesty note
 
-The station orders and the interchange identities below are the public LTA
-Downtown Line and Circle Line topologies, current as of September 2026. Every
-capacity, contract, programme, workfront, planned date and access allocation in
-the generated files is synthetic. The synthetic layer follows PS1 rules only and
-does not claim to reproduce LTA operational data.
+The station names and their order below are an unverified presentation mapping
+of the public LTA Downtown Line and Circle Line. They have not been checked
+against a retrieved authoritative LTA dataset, so the topology is a presentation
+label and not an operational reference. The generator keeps its own canonical
+identifiers and the real names never reach the solver. Every capacity, contract,
+programme, workfront, planned date and access allocation in the generated files
+is synthetic. The synthetic layer follows PS1 rules only and does not claim to
+reproduce LTA operational data.
 
 ## Real versus synthetic layers
 
 | Layer | Source | Notes |
 | --- | --- | --- |
-| Line topology | Public LTA, September 2026 | `ALP` is the DTL city segment, `BET` is the CCL segment |
-| Station order | Public LTA, September 2026 | 10 stations per line, Promenade and Bayfront shared |
-| Sector chain | Public LTA, September 2026 | Adjacent stations, shared H01_H02 tunnel marked `is_shared=1` |
+| Line topology | Unverified presentation mapping | `ALP` is the DTL city segment, `BET` is the CCL segment |
+| Station order | Unverified presentation mapping | 10 stations per line; Promenade and Bayfront are interchange hubs present on both lines |
+| Sector chain | Unverified presentation mapping | Adjacent stations; H01_H02 is a separate tunnel per line with independent capacity, so both mapped sectors carry `is_shared=0` to match the public instance |
 | Supply capacities | Synthetic | Ladder described below, follows PS1 shape only |
 | Buffer policy | PS1 rules | Live 2 sectors and opposite bound, Consist 1, Others 0 |
 | Contracts and workfronts | Synthetic | 14 contracts, 41 activities, priorities 1 to 3 |
@@ -49,14 +52,16 @@ documented here instead of in the CSV.
 
 `ALP` maps to `DTL` in station order. `BET` maps to `CCL` in station order.
 Promenade is `H01` on both lines. Bayfront is `H02` on both lines. The H01_H02
-tunnel sectors are the shared interchange tunnel and are flagged `is_shared=1`.
+interchange is two physically separate tunnels with independent line capacity,
+so both mapped H01_H02 sectors carry `is_shared=0` to match the published public
+instance. Only a `Live` activity closes the other line's H01_H02 tunnel.
 
 ## Profiles
 
 | Profile | Demand | Supply | Expected solving |
 | --- | --- | --- | --- |
-| `baseline` | Spread across both lines and bounds | Outer 4, approach 3, H01_H02 tunnel 2, interchange platform 2 | A, B and C all solve in this repository's environment |
-| `congestion` | Higher synthetic `total_accesses` across Bugis to Marina Bay | Outer 4, approach 2, H01_H02 tunnel 1, interchange platform 1 | A solves. B and C are deliberate stress and may return `UNKNOWN` inside a short budget, which is not proven infeasibility |
+| `baseline` | Spread across both lines and bounds | Outer 4, approach 3, H01_H02 tunnel 2, interchange platform 2 | A and B solve inside the bounded test budget. C is a stress case and may return `UNKNOWN` in a short budget |
+| `congestion` | Higher synthetic `total_accesses` across Bugis to Marina Bay | Outer 4, approach 2, H01_H02 tunnel 1, interchange platform 1 | Deliberate stress. A, B and C may return `UNKNOWN` inside a short budget, which is not proven infeasibility |
 | `disruption` | Byte-identical to `baseline` | Outer 4, approach 3, H01_H02 tunnel 1, interchange platform 1 | A and B solve. C may need a longer budget |
 
 The supply ladder is applied to tunnel sectors and platforms as follows.
@@ -153,5 +158,7 @@ Replace `--profile` with `congestion` or `disruption` for the other datasets.
 The generated CSV directories are not committed yet. Run the command above, or
 the tests, to produce them locally. `backend/tests/test_mapped_instance.py`
 generates every profile, loads it with the real parser and compiler, and checks
-determinism, buffer policy, the interchange Live work and one bounded baseline
-solve.
+determinism, buffer policy, the per-line interchange sectors (`is_shared=0`), the
+interchange Live work and bounded A/B solves for the profiles documented as
+solvable. Stress combinations that do not converge inside the bounded budget are
+reported, not asserted.
