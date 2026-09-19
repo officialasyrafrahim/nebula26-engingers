@@ -13,6 +13,7 @@ import EcloPanel from "./EcloPanel";
 import ExplanationsPanel from "./ExplanationsPanel";
 import HotspotsPanel from "./HotspotsPanel";
 import PossessionDrawer from "./PossessionDrawer";
+import ReplanPanel from "./ReplanPanel";
 import ScenarioCompare from "./ScenarioCompare";
 import ScorePanel from "./ScorePanel";
 import TrackSchematic from "./TrackSchematic";
@@ -79,6 +80,13 @@ export default function ResultDashboard({
           atCapacity={atCapacity}
           scenario={schedule.scenario}
           hardViolations={report.hard_violations}
+        />
+
+        <ReplanPanel
+          runId={runId}
+          jobId={jobId}
+          scenario={scenario}
+          network={network}
         />
       </div>
     );

@@ -12,6 +12,8 @@ import type {
   HealthStatus,
   NetworkResponse,
   PlanningRun,
+  ReplanRead,
+  ReplanRequest,
   ScenarioJob,
   ScenarioJobCreate,
   ScheduleResponse,
@@ -177,6 +179,25 @@ export function getReport(
   jobId: string,
 ): Promise<ValidatorReportRead> {
   return request<ValidatorReportRead>(`/runs/${runId}/jobs/${jobId}/report`);
+}
+
+export function createReplan(
+  runId: string,
+  jobId: string,
+  payload: ReplanRequest,
+): Promise<ReplanRead> {
+  return request<ReplanRead>(`/runs/${runId}/jobs/${jobId}/replan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getReplan(
+  runId: string,
+  replanId: string,
+): Promise<ReplanRead> {
+  return request<ReplanRead>(`/runs/${runId}/replans/${replanId}`);
 }
 
 export interface ExportDownload {

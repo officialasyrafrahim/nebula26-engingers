@@ -272,6 +272,167 @@ export interface ValidatorReportRead {
   created_at: string;
 }
 
+// ------------------------------------------------------------- replanning
+// Mirrors backend/app/domain/schemas.py. A disruption is a discriminated union
+// on `kind`. A replan records the impact assessment, the before/after diff and
+// the minimal-churn outcome of one disrupted solve. The source job's published
+// CSVs are never touched.
+
+export type DisruptionKind =
+  | "supply_drop"
+  | "location_unavailable"
+  | "night_unavailable"
+  | "urgent_activity";
+
+export interface SupplyDropDisruption {
+  kind: "supply_drop";
+  location_id: string;
+  new_supply: number;
+}
+
+export interface LocationUnavailableDisruption {
+  kind: "location_unavailable";
+  location_id: string;
+  weeks: number[] | null;
+}
+
+export interface NightUnavailableDisruption {
+  kind: "night_unavailable";
+  physical_night: number;
+  weeks: number[] | null;
+}
+
+export interface UrgentActivityDisruption {
+  kind: "urgent_activity";
+  activity_id: string;
+  contract_number: string;
+  activity_type?: string | null;
+  start_location_id: string;
+  end_location_id: string;
+  total_accesses: number;
+  planned_start_date: string;
+  predecessor_activity_id?: string | null;
+  activity_priority: number;
+}
+
+export type Disruption =
+  | SupplyDropDisruption
+  | LocationUnavailableDisruption
+  | NightUnavailableDisruption
+  | UrgentActivityDisruption;
+
+export interface ReplanRequest {
+  disruptions: Disruption[];
+  time_limit_seconds?: number;
+  seed?: number;
+  horizon_extension_weeks?: number;
+}
+
+export interface ReplanInvalidPlacement {
+  activity_id: string;
+  week: number;
+  physical_night: number | null;
+  location_id: string | null;
+  reason: string;
+}
+
+export interface ReplanAffectedLocationWeek {
+  location_id: string;
+  week: number;
+  used: number;
+  capacity: number;
+  excess: number;
+  reason: string;
+}
+
+export interface ReplanWorkload {
+  access_nights_before: number;
+  invalid_access_nights: number;
+  injected_access_nights: number;
+  access_nights_after_lower_bound: number;
+}
+
+export interface ReplanOverrunImpact {
+  overrun_days_before: number;
+  contracts_overrunning_before: number;
+  displaced_access_nights: number;
+  worst_case_additional_overrun_days: number;
+  worst_case_overrun_days: number;
+}
+
+export interface ReplanImpact {
+  invalid_placements: ReplanInvalidPlacement[];
+  affected_activities: string[];
+  affected_contracts: string[];
+  affected_location_weeks: ReplanAffectedLocationWeek[];
+  workload: ReplanWorkload;
+  overrun: ReplanOverrunImpact;
+  notes: string[];
+}
+
+export type SlotPair = [number, number | null];
+
+export interface ReplanMovedPlacement {
+  activity_id: string;
+  from: SlotPair[];
+  to: SlotPair[];
+}
+
+export interface ReplanDiffTotals {
+  original_accesses: number;
+  replan_accesses: number;
+  reused_accesses: number;
+  moved_accesses: number;
+  moved_activities: number;
+  unchanged_activities: number;
+}
+
+export interface ReplanDiff {
+  moved: ReplanMovedPlacement[];
+  unchanged: string[];
+  added: string[];
+  removed: string[];
+  newly_unsatisfiable: string[];
+  totals: ReplanDiffTotals;
+}
+
+export interface ReplanChurn {
+  moved_accesses: number;
+  access_weight: number;
+}
+
+export interface ReplanResultPayload {
+  feasible: boolean;
+  status: string;
+  horizon_weeks_used: number;
+  infeasibility_reasons: string[];
+  objective_breakdown: Record<string, unknown>;
+  binding_reasons: Record<string, string[]>;
+  churn: ReplanChurn;
+  access?: ScheduleAccess[];
+  occupancy?: ScheduleOccupancy[];
+  contract_results?: unknown[];
+  contract_completion?: Record<string, string>;
+  physical_checks?: PhysicalCheckReport | null;
+}
+
+export interface ReplanRead {
+  id: string;
+  run_id: string;
+  job_id: string;
+  scenario: Scenario;
+  status: string;
+  safe: boolean;
+  seed: number | null;
+  churn_cost: number;
+  disruption: Disruption[];
+  impact: ReplanImpact;
+  diff: ReplanDiff;
+  result: ReplanResultPayload | null;
+  error: string | null;
+  created_at: string;
+}
+
 export type HealthStatus = Record<string, unknown>;
 
 // --------------------------------------------------------- LTA DataMall context
