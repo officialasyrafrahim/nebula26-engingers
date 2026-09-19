@@ -193,6 +193,7 @@ def build_fake_solver_result(
                     week=week,
                     eclo=False,
                     access_night=1,
+                    physical_night=1,
                 )
             )
             for location_id in dict.fromkeys(activity.occupied_locations):

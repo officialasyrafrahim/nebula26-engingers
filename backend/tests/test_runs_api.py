@@ -380,7 +380,14 @@ def test_schedule_physical_witness_fails_closed_without_witness(
 ):
     """Witness-free solver output is surfaced as a failed witness, not silence."""
 
-    monkeypatch.setattr(rail_solver_worker, "solve", fake_solver_result)
+    def without_physical_witness(compiled, scenario, **kwargs):
+        base = fake_solver_result(compiled, scenario, **kwargs)
+        access = tuple(
+            row.model_copy(update={"physical_night": None}) for row in base.access
+        )
+        return base.model_copy(update={"access": access})
+
+    monkeypatch.setattr(rail_solver_worker, "solve", without_physical_witness)
     run_id = _upload(client, minimal_instance_files).json()["id"]
     job_id = _submit(client, run_id, "A").json()["id"]
 
@@ -392,3 +399,13 @@ def test_schedule_physical_witness_fails_closed_without_witness(
     assert report["passed"] is False
     checks = {check["name"]: check for check in report["checks"]}
     assert checks["witness_available"]["passed"] is False
+    validator = client.get(
+        f"/api/v1/runs/{run_id}/jobs/{job_id}/report"
+    ).json()
+    assert validator["feasible"] is True
+    assert validator["ready_for_submission"] is False
+    job = client.get(f"/api/v1/runs/{run_id}/jobs/{job_id}").json()
+    assert job["result"]["ready_for_submission"] is False
+    assert client.get(
+        f"/api/v1/runs/{run_id}/jobs/{job_id}/export"
+    ).status_code == 409

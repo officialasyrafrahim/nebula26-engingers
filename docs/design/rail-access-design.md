@@ -638,8 +638,13 @@ Codes emitted by the current engine:
 | `ECLO_WINDOW` | ECLO was constrained to the two-week line window (C) |
 | `PRIORITY_OVERRUN` | The contract completion exceeds its planned date |
 | `HORIZON_EXTENDED` | The activity is placed beyond the nominal horizon |
+| `BUFFER_CLOSURE` | A same-week conflicting activity requires a separate physical slot because of its buffer closure |
+| `LIVE_MIRROR` | A same-week conflicting activity requires a separate physical slot because Live work mirrors onto the opposite bound |
+| `INTERCHANGE` | A same-week conflicting activity requires a separate physical slot because of the interchange closure |
+| `POSSESSION_MIX` | The activity shares a slot under the legal PM, PC and C possession mix |
 
-`BUFFER_CLOSURE`, `LIVE_MIRROR`, `INTERCHANGE` and `POSSESSION_MIX` remain part of the vocabulary and the UI renders them if present, but the current engine does not emit them.
+The three closure codes explain physical-slot separation inside a week. They do
+not by themselves claim that the rule displaced an activity to another week.
 
 Each explanation carries the reason codes, a deterministic prose summary built from actual ids and weeks, and an evidence map (first week, planned-start week, predecessor, horizon). Example: `A004 first access week 21; planned start week 20; predecessor A003 last access week 20; bounded by planned start; packed into a co-shared possession.` Explanations survive a process reload because they are rebuilt from persisted rows.
 

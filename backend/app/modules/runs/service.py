@@ -352,11 +352,11 @@ def _explanation_summary(
     if "ECLO_WINDOW" in codes:
         parts.append("ECLO kept within the scenario window")
     if "BUFFER_CLOSURE" in codes:
-        parts.append("bounded by a closure buffer")
+        parts.append("kept on a separate physical slot by a closure buffer")
     if "LIVE_MIRROR" in codes:
-        parts.append("Live working mirrored onto the opposite bound")
+        parts.append("kept separate by Live opposite-bound mirroring")
     if "INTERCHANGE" in codes:
-        parts.append("reached the H01-H02 interchange")
+        parts.append("kept separate by an interchange closure")
     if "POSSESSION_MIX" in codes:
         parts.append("packed under possession-mix rules")
     if "CO_SHARE_PACKED" in codes:

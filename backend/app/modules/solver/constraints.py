@@ -11,6 +11,7 @@ from typing import Any
 
 from app.domain.rail.compiled import CompiledInstance
 from app.domain.rail.keys import parse_location_id
+from app.modules.compiler.mixes import C_ONLY_LIMIT, PC_COWORKER_LIMIT
 from app.modules.compiler.policy import ScenarioPolicy
 from app.modules.solver.possession import truly_co_sharable
 from app.modules.solver.variables import SolverVariables
@@ -220,8 +221,12 @@ def add_possession_constraints(
                 # One PM alone, or one PC plus up to three C, or up to four C.
                 model.Add(pm <= 1)
                 model.Add(pm + pc <= 1)
-                model.Add(4 * pm + coworker <= 4)
-                model.Add(pc + coworker <= 4)
+                model.Add(C_ONLY_LIMIT * pm + coworker <= C_ONLY_LIMIT)
+                model.Add(coworker <= C_ONLY_LIMIT)
+                model.Add(
+                    C_ONLY_LIMIT * pc + coworker
+                    <= C_ONLY_LIMIT + PC_COWORKER_LIMIT
+                )
 
     for left_id, right_id in sorted(possession.closure_conflicts):
         if truly_co_sharable(compiled, left_id, right_id):

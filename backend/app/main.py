@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import get_settings
-from app.core.db import Base, engine
+from app.core.db import initialize_database
 from app.domain import models as _models  # noqa: F401  (register ORM tables)
 from app.modules.runs.api import router as runs_router
 
@@ -32,7 +32,7 @@ def _inprocess_worker_loop() -> None:
 async def lifespan(app: FastAPI):
     """Create tables and optionally start the in-process worker thread."""
 
-    Base.metadata.create_all(bind=engine)
+    initialize_database()
     settings = get_settings()
     worker_thread: threading.Thread | None = None
     if settings.start_inprocess_worker:

@@ -105,6 +105,8 @@ def _persist_success(
 ) -> None:
     """Persist placements, contract results and report in one transaction."""
 
+    ready_for_submission = report.ready_for_submission and physical_checks.passed
+
     session.execute(
         delete(ScheduleAccessRow).where(ScheduleAccessRow.job_id == job.id)
     )
@@ -155,7 +157,7 @@ def _persist_success(
             scenario=report.scenario,
             feasible=report.feasible,
             workload_complete=report.workload_complete,
-            ready_for_submission=report.ready_for_submission,
+            ready_for_submission=ready_for_submission,
             authority=report.authority,
             report=report.model_dump(mode="json"),
         )
@@ -171,7 +173,7 @@ def _persist_success(
         "occupancy_count": len(solver_result.occupancy),
         "contract_count": len(solver_result.contract_results),
         "authority": report.authority,
-        "ready_for_submission": report.ready_for_submission,
+        "ready_for_submission": ready_for_submission,
         "binding_reasons": solver_result.binding_reasons,
         "physical_checks": physical_checks.model_dump(mode="json"),
     }

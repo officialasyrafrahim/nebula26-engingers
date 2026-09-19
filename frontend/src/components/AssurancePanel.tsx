@@ -4,6 +4,7 @@ import type {
   PhysicalCheckReport,
   ValidatorReport,
 } from "../api/types";
+import { checkDetailText } from "../lib/assurance";
 import Panel from "./Panel";
 import SignalLamp, { type LampTone } from "./SignalLamp";
 
@@ -25,30 +26,6 @@ function lampTone(state: LayerState): LampTone {
   if (state === "pass") return "ok";
   if (state === "fail") return "danger";
   return "idle";
-}
-
-function checkDetailText(detail: string | Record<string, unknown>): string {
-  if (typeof detail === "string") return detail;
-  const reason = detail.reason;
-  if (typeof reason === "string" && reason) return reason;
-  for (const key of [
-    "violations",
-    "hard_violations",
-    "soft_excess",
-  ] as const) {
-    const value = detail[key];
-    if (Array.isArray(value)) {
-      return value.length === 0 ? "none" : `${value.length} issue(s)`;
-    }
-  }
-  if (typeof detail.soft_excess_total === "number") {
-    return `soft excess ${detail.soft_excess_total}`;
-  }
-  if (typeof detail.activities_without_physical_night === "number") {
-    return `${detail.activities_without_physical_night} row(s) without a slot`;
-  }
-  const text = JSON.stringify(detail);
-  return text.length > 160 ? `${text.slice(0, 157)}...` : text;
 }
 
 function CheckMark({ passed }: { passed: boolean }) {
@@ -119,11 +96,18 @@ export default function AssurancePanel({
   let status: OverallStatus;
   const failingLayers: string[] = [];
   if (officialAuthority) {
-    if (validatorPassed) {
+    if (physicalState === "pass" && validatorPassed) {
       status = "OFFICIALLY VALIDATED";
     } else {
       status = "NOT VALIDATED";
-      failingLayers.push("official validation");
+      if (physicalState !== "pass") {
+        failingLayers.push(
+          physicalState === "unavailable"
+            ? "physical schedule checks (not recorded)"
+            : "physical schedule checks",
+        );
+      }
+      if (!validatorPassed) failingLayers.push("official validation");
     }
   } else if (fallbackAuthority && physicalState === "pass" && validatorPassed) {
     status = "PROVISIONAL";

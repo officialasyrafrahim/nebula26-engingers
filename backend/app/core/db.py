@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
@@ -22,6 +22,23 @@ def _create_engine():
 
 engine = _create_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def initialize_database(bind: Engine = engine) -> None:
+    """Create current tables and apply the supported additive schema upgrade."""
+
+    Base.metadata.create_all(bind=bind)
+    columns = {
+        column["name"] for column in inspect(bind).get_columns("schedule_access_rows")
+    }
+    if "physical_night" not in columns:
+        with bind.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE schedule_access_rows "
+                    "ADD COLUMN physical_night INTEGER"
+                )
+            )
 
 
 def get_db() -> Iterator[Session]:

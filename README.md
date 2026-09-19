@@ -92,7 +92,7 @@ Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, 
 
 The browser is the judge-facing entry point. It provides the hidden-instance upload, scenario dispatch, job polling, network schematic, timeline, physical assurance, fallback/official validator status and gated download. Browser requests remain same-origin: nginx serves the SPA and proxies `/api` and `/healthz` to FastAPI.
 
-For a public deployment, expose the web service through an HTTPS reverse proxy and keep PostgreSQL, Redis and the API bound to localhost or the Compose network. The application currently has a development role-header stub rather than production identity management, so protect the public URL with a reverse-proxy allowlist or authentication shared with the judges. Uploaded instance files remain inside PostgreSQL and are not sent to third-party services.
+For a public deployment, expose the web service through an HTTPS reverse proxy and keep PostgreSQL, Redis and the API bound to localhost or the Compose network. The application currently has a development role-header stub rather than production identity management, so protect the public URL with a reverse-proxy allowlist or authentication shared with the judges. Uploaded instance files remain inside PostgreSQL and are not sent to third-party services. See `docs/local-public-hosting.md` for public tunnels, temporary domains and private zero-trust access options.
 
 The repository contains production images and the hosted runbook. Publishing the final URL still requires a host, DNS name and credentials supplied by the team.
 

@@ -34,11 +34,11 @@ def test_summary_cites_each_displacement_reason():
         predecessor_last_week=None,
         horizon_weeks=4,
     )
-    assert "bounded by a closure buffer" in summary
+    assert "kept on a separate physical slot by a closure buffer" in summary
     assert "used a location at its capacity limit" in summary
     assert "packed into a co-shared possession" in summary
-    assert "reached the H01-H02 interchange" in summary
-    assert "mirrored onto the opposite bound" in summary
+    assert "kept separate by an interchange closure" in summary
+    assert "kept separate by Live opposite-bound mirroring" in summary
     assert "packed under possession-mix rules" in summary
 
 
@@ -53,7 +53,8 @@ def test_summary_stays_generic_without_supporting_facts():
         horizon_weeks=4,
     )
     assert summary == (
-        "A1 first access week 1; planned start week 1; bounded by a closure buffer."
+        "A1 first access week 1; planned start week 1; kept on a separate "
+        "physical slot by a closure buffer."
     )
 
 

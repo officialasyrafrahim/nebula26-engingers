@@ -28,8 +28,8 @@ port.
 
 - Docker Engine with Compose v2.
 - Ports `5173` (UI) and `8000` (loopback API) free on the host.
-- A fresh database volume. Tables come from `Base.metadata.create_all`. There are
-  no migrations and a volume from the legacy stack is incompatible.
+- A database volume writable by the API. Startup creates missing tables and adds
+  the nullable `physical_night` column to volumes created by `v0.3.0`.
 - For a public URL, a DNS name and HTTPS reverse proxy on ports 80/443.
 
 ## Configure
@@ -48,6 +48,11 @@ Change `POSTGRES_PASSWORD` before using a public host. PostgreSQL, Redis and the
 API bind to loopback by default. Keep `WEB_BIND_ADDRESS=127.0.0.1` when a host
 reverse proxy terminates HTTPS. Set it to `0.0.0.0` only for a trusted network or
 short-lived direct-port demonstration.
+
+Do not add `RAO_DATABASE_URL` to `deploy/.env`. Compose builds the container URL
+from `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB`. The hostname `db`
+only resolves inside the Compose network. A backend started directly on the host
+uses `127.0.0.1` and `POSTGRES_HOST_PORT` instead.
 
 ## Start and stop
 
@@ -87,6 +92,10 @@ the planner role. Protect the public URL with reverse-proxy authentication or an
 IP allowlist, and share those credentials with the judges. Do not expose ports
 5432 or 6379 publicly. The web service already proxies every browser API call,
 so only the HTTPS web URL needs public ingress.
+
+For a laptop-hosted demonstration, see `docs/local-public-hosting.md`. A named
+Cloudflare Tunnel with Cloudflare Access provides a stable HTTPS hostname and
+judge identity checks without opening inbound firewall ports.
 
 ## Judge flow, upload to download
 
@@ -152,7 +161,8 @@ http://localhost:5173/healthz` should return the API health JSON.
 Port conflict on start. Stop the process on `5173` or `8000`, or change the host
 side of the `ports` mapping for `web` or `api`.
 
-Corrupt or legacy database. Stop the stack and reset the volume. This destroys
+Corrupt or pre-`v0.3.0` database. Back it up first. If it cannot start after the
+supported additive upgrade, stop the stack and reset the volume. This destroys
 all runs.
 
 ```bash

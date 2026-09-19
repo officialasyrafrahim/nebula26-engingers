@@ -5,7 +5,7 @@ PIP=$(VENV)/bin/pip
 PY=$(VENV)/bin/python
 COMPOSE=docker compose -f deploy/docker-compose.yml
 
-.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-build features features-validate labels-dry-run labels-sync
+.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-test web-build features features-validate labels-dry-run labels-sync
 
 venv:
 	python3 -m venv $(VENV)
@@ -61,6 +61,9 @@ web-install:
 
 web-dev:
 	npm --prefix $(FRONTEND) run dev
+
+web-test:
+	npm --prefix $(FRONTEND) test
 
 web-build:
 	npm --prefix $(FRONTEND) install
