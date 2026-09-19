@@ -4,6 +4,8 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Build a witness-gated greedy incumbent so tight budgets still return a safe complete schedule.
+- Add Tonight controller mode, scenario comparison, embedded why evidence and network name mapping.
 - Harden hidden-instance parsing against malformed CSV, bad encoding and unsafe values.
 - Enforce a single seven-night physical-slot universe across solver, fallback and witness.
 - Reject provable same-class closure, mirror and interchange conflicts in fallback validation.

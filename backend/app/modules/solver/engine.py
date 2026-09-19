@@ -29,6 +29,7 @@ from app.modules.solver.constraints import (
     add_possession_constraints,
     add_time_constraints,
 )
+from app.modules.solver.greedy import GreedySolution, build_greedy_solution
 from app.modules.solver.model import (
     DEFAULT_HORIZON_EXTENSION_WEEKS,
     DEFAULT_SEED,
@@ -45,6 +46,7 @@ from app.modules.solver.results import (
     week_end,
 )
 from app.modules.solver.variables import SolverVariables, build_variables
+from app.modules.validator.witness import check_physical_witness
 
 Scenario = Literal["A", "B", "C"]
 
@@ -232,6 +234,71 @@ def _attempt_budget(time_limit_seconds: float, remaining: float) -> float:
     return max(0.01, remaining * 0.5)
 
 
+def _greedy_hint_rows(
+    compiled: CompiledInstance,
+    variables: SolverVariables,
+    greedy: GreedySolution,
+) -> tuple[list[AccessPlacement], list[OccupancyPlacement]]:
+    """Project a greedy schedule into the published access/occupancy rows.
+
+    The co-share labels are the ones the engine will emit after a solve, so the
+    witness gate checks exactly the physical facts the greedy schedule carries.
+    """
+
+    access_rows: list[AccessPlacement] = []
+    occupied: list[tuple[str, int, str, int]] = []
+    sequence: dict[str, int] = defaultdict(int)
+    for placement in greedy.placements:
+        activity = compiled.activities[placement.activity_id]
+        sequence[placement.activity_id] += 1
+        access_rows.append(
+            AccessPlacement(
+                activity_id=placement.activity_id,
+                access_seq=sequence[placement.activity_id],
+                week=placement.week,
+                eclo=placement.eclo,
+                access_night=1,
+                physical_night=placement.physical_night,
+            )
+        )
+        for location_id in dict.fromkeys(activity.occupied_locations):
+            occupied.append(
+                (
+                    placement.activity_id,
+                    placement.week,
+                    location_id,
+                    placement.physical_night,
+                )
+            )
+    occupancy_rows = _assign_co_share_groups(
+        compiled, variables.activity_order, occupied
+    )
+    return access_rows, occupancy_rows
+
+
+def _witness_checked_greedy(
+    compiled: CompiledInstance,
+    policy: ScenarioPolicy,
+    variables: SolverVariables,
+    total_weeks: int,
+) -> GreedySolution | None:
+    """Return a greedy schedule only when the independent witness accepts it.
+
+    This is a fail-closed gate. A greedy miss or a witness failure returns
+    ``None`` so the normal CP-SAT search runs without a hint and safety
+    semantics are untouched.
+    """
+
+    greedy = build_greedy_solution(compiled, policy, total_weeks)
+    if greedy is None or not greedy.placements:
+        return None
+    access_rows, occupancy_rows = _greedy_hint_rows(compiled, variables, greedy)
+    report = check_physical_witness(compiled, policy, access_rows, occupancy_rows)
+    if not report.passed:
+        return None
+    return greedy
+
+
 def _attempt(
     cp: Any,
     compiled: CompiledInstance,
@@ -254,6 +321,19 @@ def _attempt(
     add_eclo_constraints(model, compiled, variables, policy)
     build_objective(model, compiled, variables, policy)
 
+    greedy = _witness_checked_greedy(compiled, policy, variables, total_weeks)
+    if greedy is not None:
+        for placement in greedy.placements:
+            key = (
+                placement.activity_id,
+                placement.week,
+                placement.physical_night,
+                int(placement.eclo),
+            )
+            variable = variables.x.get(key)
+            if variable is not None:
+                model.AddHint(variable, 1)
+
     solver = cp.CpSolver()
     solver.parameters.random_seed = seed
     solver.parameters.num_search_workers = 1
@@ -262,28 +342,65 @@ def _attempt(
     status = solver.Solve(model)
     status_name = solver.StatusName(status)
 
-    if status not in (cp.OPTIMAL, cp.FEASIBLE):
-        return SolverResult(
-            feasible=False,
-            scenario=policy.scenario,
-            status=status_name,
-            horizon_weeks_used=0,
-            objective_breakdown={"scenario": policy.scenario},
-            infeasibility_reasons=_infeasibility_reasons(
-                compiled, policy, total_weeks, status_name
-            ),
+    if status in (cp.OPTIMAL, cp.FEASIBLE):
+        assignment = {
+            key: 1 for key in variables.x if solver.Value(variables.x[key]) > 0.5
+        }
+        return _extract_result(
+            compiled,
+            policy,
+            variables,
+            assignment,
+            status_name,
+            overshoot=int(solver.Value(variables.overshoot)),
+            solver_objective=solver.ObjectiveValue(),
         )
 
-    return _extract_result(compiled, policy, variables, solver, total_weeks, status_name)
+    if status_name == "UNKNOWN" and greedy is not None:
+        # CP-SAT spent the budget before finding an incumbent. The greedy
+        # schedule already passed the independent witness gate, so publish it as
+        # the complete feasible schedule instead of an unfinished search. A
+        # proven INFEASIBLE is never overridden this way.
+        assignment = {
+            (
+                placement.activity_id,
+                placement.week,
+                placement.physical_night,
+                int(placement.eclo),
+            ): 1
+            for placement in greedy.placements
+        }
+        return _extract_result(
+            compiled,
+            policy,
+            variables,
+            assignment,
+            "FEASIBLE",
+            overshoot=0,
+            solver_objective=0.0,
+        )
+
+    return SolverResult(
+        feasible=False,
+        scenario=policy.scenario,
+        status=status_name,
+        horizon_weeks_used=0,
+        objective_breakdown={"scenario": policy.scenario},
+        infeasibility_reasons=_infeasibility_reasons(
+            compiled, policy, total_weeks, status_name
+        ),
+    )
 
 
 def _extract_result(
     compiled: CompiledInstance,
     policy: ScenarioPolicy,
     variables: SolverVariables,
-    solver: Any,
-    total_weeks: int,
+    assignment: dict[tuple[str, int, int, int], int],
     status_name: str,
+    *,
+    overshoot: int,
+    solver_objective: float,
 ) -> SolverResult:
     access_rows: list[AccessPlacement] = []
     occupied: list[tuple[str, int, str, int]] = []
@@ -303,7 +420,7 @@ def _extract_result(
             for night in variables.activity_nights[activity_id]:
                 for eclo in variables.eclo_values:
                     key = (activity_id, week, night, eclo)
-                    if key in variables.x and solver.Value(variables.x[key]) > 0.5:
+                    if key in variables.x and key in assignment:
                         accesses.append((week, night, bool(eclo)))
         accesses.sort(key=lambda item: (item[0], item[1]))
         physical_by_activity[activity_id] = accesses
@@ -342,7 +459,13 @@ def _extract_result(
 
     contract_results = _contract_results(compiled, access_weeks)
     breakdown = _objective_breakdown(
-        compiled, policy, variables, solver, access_rows, occupancy_rows, contract_results
+        compiled,
+        policy,
+        access_rows,
+        occupancy_rows,
+        contract_results,
+        overshoot=overshoot,
+        solver_objective=solver_objective,
     )
     binding_reasons, displacement_evidence = _binding_reasons(
         compiled, variables, access_weeks, occupancy_rows, policy, access_rows
@@ -447,11 +570,12 @@ def _contract_results(
 def _objective_breakdown(
     compiled: CompiledInstance,
     policy: ScenarioPolicy,
-    variables: SolverVariables,
-    solver: Any,
     access_rows: list[AccessPlacement],
     occupancy_rows: list[OccupancyPlacement],
     contract_results: list[ContractResult],
+    *,
+    overshoot: int,
+    solver_objective: float,
 ) -> dict[str, Any]:
     groups: dict[tuple[str, int], set[str]] = defaultdict(set)
     for row in occupancy_rows:
@@ -519,8 +643,8 @@ def _objective_breakdown(
         "eclo_nights_total": eclo_total,
         "access_nights_total": len(access_rows),
         "nights_scheduled": len(access_rows),
-        "overshoot_units": int(solver.Value(variables.overshoot)),
-        "solver_objective": solver.ObjectiveValue(),
+        "overshoot_units": int(overshoot),
+        "solver_objective": solver_objective,
         "score": score,
         "capacity_hotspots": hotspots,
     }
