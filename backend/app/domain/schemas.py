@@ -264,6 +264,107 @@ class ReplanRead(ReadModel):
     created_at: datetime
 
 
+class SandboxRequest(BaseModel):
+    """A controlled what-if evaluation over a completed scenario job.
+
+    Only the listed inputs may vary. Any location, contract or scenario not
+    present on the source run is rejected rather than silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: Scenario | None = None
+    supply: dict[str, int] = Field(default_factory=dict)
+    workfronts: dict[str, int] = Field(default_factory=dict)
+    horizon_extension_weeks: int | None = Field(default=None, ge=0)
+    eclo_allowed: bool | None = None
+    time_limit_seconds: int | None = Field(default=None, gt=0)
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    fragility_location_id: str | None = None
+    fragility_max_trials: int = Field(default=16, ge=2, le=64)
+
+
+class SandboxMetricSet(BaseModel):
+    """The objective facts reported for one what-if arm."""
+
+    overrun_days_total: int
+    excess_access_nights_total: int
+    eclo_nights_total: int
+    access_nights_total: int
+    score: float
+
+
+class SandboxOutcomeRead(BaseModel):
+    """One what-if arm. Placements are present only when the arm is safe."""
+
+    scenario: str
+    feasible: bool
+    safe: bool
+    status: str
+    metrics: SandboxMetricSet
+    objective_breakdown: dict[str, Any] = Field(default_factory=dict)
+    infeasibility_reasons: list[str] = Field(default_factory=list)
+    witness: PhysicalWitnessReport | None = None
+    access: list[dict[str, Any]] = Field(default_factory=list)
+    occupancy: list[dict[str, Any]] = Field(default_factory=list)
+    contract_results: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SandboxFragility(BaseModel):
+    """The bounded supply-fragility signal for one location."""
+
+    location_id: str
+    base_supply: int
+    feasible_floor: int | None = None
+    breaking_new_supply: int | None = None
+    smallest_supply_reduction: int | None = None
+    trials: int
+    bounded: bool
+    note: str
+
+
+class SandboxRead(BaseModel):
+    """A what-if evaluation and its optional fragility signal."""
+
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    source_scenario: Scenario
+    applied: dict[str, Any] = Field(default_factory=dict)
+    baseline: SandboxMetricSet
+    variant: SandboxOutcomeRead
+    delta: dict[str, float] = Field(default_factory=dict)
+    fragility: SandboxFragility | None = None
+
+
+class ScheduleQueryRequest(BaseModel):
+    """One typed, closed-grammar schedule query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=200)
+
+
+class ScheduleQueryCitation(BaseModel):
+    """A pointer back to one persisted evidence source."""
+
+    source: str
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScheduleQueryResponse(BaseModel):
+    """A deterministic answer with the evidence and citations behind it."""
+
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    scenario: Scenario
+    query: str
+    kind: str
+    answerable: bool
+    answer: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    citations: list[ScheduleQueryCitation] = Field(default_factory=list)
+
+
 __all__ = [
     "ActivityExplanation",
     "ActivitySpanRead",
@@ -276,10 +377,18 @@ __all__ = [
     "PlanningRunRead",
     "ReplanRead",
     "ReplanRequest",
+    "SandboxFragility",
+    "SandboxMetricSet",
+    "SandboxOutcomeRead",
+    "SandboxRead",
+    "SandboxRequest",
     "ScenarioJobCreate",
     "ScenarioJobRead",
     "ScheduleAccessRead",
     "ScheduleOccupancyRead",
+    "ScheduleQueryCitation",
+    "ScheduleQueryRequest",
+    "ScheduleQueryResponse",
     "ScheduleResponse",
     "SupplyDrop",
     "UrgentActivityInjection",

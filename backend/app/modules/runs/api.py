@@ -19,8 +19,12 @@ from app.domain.schemas import (
     PlanningRunRead,
     ReplanRead,
     ReplanRequest,
+    SandboxRead,
+    SandboxRequest,
     ScenarioJobCreate,
     ScenarioJobRead,
+    ScheduleQueryRequest,
+    ScheduleQueryResponse,
     ScheduleResponse,
     ValidatorReportRead,
 )
@@ -161,6 +165,37 @@ def get_replan(
     """Fetch a persisted disruption impact assessment and replan diff."""
 
     return service.get_replan(db, run_id, replan_id)
+
+
+@router.post(
+    "/runs/{run_id}/jobs/{job_id}/sandbox",
+    response_model=SandboxRead,
+)
+def create_sandbox(
+    run_id: uuid.UUID,
+    job_id: uuid.UUID,
+    data: SandboxRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(UserRole.PLANNER, UserRole.ADMIN)),
+) -> SandboxRead:
+    """Evaluate a controlled what-if over a completed job without persisting it."""
+
+    return service.create_sandbox(db, run_id, job_id, data, actor=user.id)
+
+
+@router.post(
+    "/runs/{run_id}/jobs/{job_id}/query",
+    response_model=ScheduleQueryResponse,
+)
+def query_schedule(
+    run_id: uuid.UUID,
+    job_id: uuid.UUID,
+    data: ScheduleQueryRequest,
+    db: Session = Depends(get_db),
+) -> ScheduleQueryResponse:
+    """Answer one closed-grammar schedule query from persisted evidence."""
+
+    return service.query_schedule(db, run_id, job_id, data)
 
 
 @router.get("/runs/{run_id}/jobs/{job_id}/export")

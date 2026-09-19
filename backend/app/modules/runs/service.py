@@ -28,9 +28,18 @@ from app.domain.schemas import (
     ActivityExplanation,
     ActivitySpanRead,
     ReplanRequest,
+    SandboxFragility,
+    SandboxMetricSet,
+    SandboxOutcomeRead,
+    SandboxRead,
+    SandboxRequest,
     ScenarioJobCreate,
+    ScheduleQueryCitation,
+    ScheduleQueryRequest,
+    ScheduleQueryResponse,
 )
 from app.modules.compiler import compile_instance, expand_all_routes
+from app.modules.explain import query as query_module
 from app.modules.export import (
     AccessRow,
     OccupancyRow,
@@ -44,6 +53,7 @@ from app.modules.instance.service import build_planning_instance
 from app.modules.runs.queue import get_queue
 from app.modules.solver import OrToolsUnavailableError, reasons
 from app.modules.solver import replan as replan_module
+from app.modules.solver import sandbox as sandbox_module
 from app.modules.solver.possession import truly_co_sharable
 
 ACTIVE_STATES = (JobState.QUEUED, JobState.RUNNING, JobState.VALIDATING)
@@ -878,6 +888,317 @@ def get_replan(db: Session, run_id, replan_id) -> ReplanRow:
     return row
 
 
+_METRIC_FIELDS = (
+    "overrun_days_total",
+    "excess_access_nights_total",
+    "eclo_nights_total",
+    "access_nights_total",
+    "score",
+)
+
+
+def _metric_set(breakdown: dict, *, access_count: int, contract_rows) -> SandboxMetricSet:
+    """Objective facts from a persisted breakdown, with row fallbacks."""
+
+    breakdown = breakdown or {}
+    overrun = breakdown.get("overrun_days_total")
+    if overrun is None:
+        overrun = sum(int(row.overrun_days) for row in contract_rows)
+    return SandboxMetricSet(
+        overrun_days_total=int(overrun or 0),
+        excess_access_nights_total=int(
+            breakdown.get("excess_access_nights_total", 0) or 0
+        ),
+        eclo_nights_total=int(breakdown.get("eclo_nights_total", 0) or 0),
+        access_nights_total=int(
+            breakdown.get("access_nights_total", access_count) or 0
+        ),
+        score=float(breakdown.get("score", 0.0) or 0.0),
+    )
+
+
+def _sandbox_outcome_read(outcome: sandbox_module.SandboxOutcome) -> SandboxOutcomeRead:
+    """Serialise one what-if arm; placements only when the arm is safe."""
+
+    result = outcome.result
+    payload = SandboxOutcomeRead(
+        scenario=outcome.scenario,
+        feasible=outcome.feasible,
+        safe=outcome.safe,
+        status=outcome.status,
+        metrics=_metric_set(
+            dict(result.objective_breakdown),
+            access_count=len(result.access),
+            contract_rows=result.contract_results,
+        ),
+        objective_breakdown=dict(result.objective_breakdown),
+        infeasibility_reasons=list(result.infeasibility_reasons),
+        witness=outcome.witness,
+    )
+    if outcome.feasible and outcome.safe:
+        payload.access = [row.model_dump(mode="json") for row in result.access]
+        payload.occupancy = [row.model_dump(mode="json") for row in result.occupancy]
+        payload.contract_results = [
+            row.model_dump(mode="json") for row in result.contract_results
+        ]
+    return payload
+
+
+def create_sandbox(
+    db: Session,
+    run_id,
+    job_id,
+    data: SandboxRequest,
+    *,
+    actor: str | None = None,
+) -> SandboxRead:
+    """Evaluate a controlled what-if over a completed job.
+
+    The source job's published schedule rows are only read, and the sandbox
+    writes no schedule, so an evaluation can never rewrite the three submission
+    CSVs. Only an audit row records that the evaluation happened.
+    """
+
+    run = get_run(db, run_id)
+    job = get_job(db, run_id, job_id)
+    if job.state != JobState.COMPLETED:
+        raise HTTPException(
+            status_code=409,
+            detail="job has not completed; there is no schedule to sandbox",
+        )
+
+    access = list(
+        db.scalars(
+            select(ScheduleAccessRow)
+            .where(ScheduleAccessRow.job_id == job.id)
+            .order_by(ScheduleAccessRow.activity_id, ScheduleAccessRow.access_seq)
+        ).all()
+    )
+    contract_rows = list(
+        db.scalars(
+            select(ContractResultRow)
+            .where(ContractResultRow.job_id == job.id)
+            .order_by(ContractResultRow.contract_number)
+        ).all()
+    )
+    compiled = compile_instance(instance_for_run(run))
+    settings = get_settings()
+    time_limit = (
+        data.time_limit_seconds
+        or job.time_limit_seconds
+        or settings.solver_time_limit_seconds
+    )
+    seed = (
+        data.seed
+        if data.seed is not None
+        else (job.seed if job.seed is not None else settings.solver_seed)
+    )
+    extension = (
+        data.horizon_extension_weeks
+        if data.horizon_extension_weeks is not None
+        else settings.horizon_extension_weeks
+    )
+    knobs = sandbox_module.WhatIfKnobs(
+        scenario=data.scenario.value if data.scenario is not None else None,
+        supply=dict(data.supply),
+        workfronts=dict(data.workfronts),
+        horizon_extension_weeks=data.horizon_extension_weeks,
+        eclo_allowed=data.eclo_allowed,
+    )
+    try:
+        outcome = sandbox_module.evaluate_what_if(
+            compiled,
+            job.scenario.value,
+            knobs,
+            time_limit_seconds=time_limit,
+            seed=seed,
+            horizon_extension_weeks=extension,
+        )
+    except OrToolsUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except sandbox_module.SandboxError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"invalid sandbox request: {exc}"
+        ) from exc
+
+    baseline = _metric_set(
+        (job.result or {}).get("objective_breakdown") or {},
+        access_count=len(access),
+        contract_rows=contract_rows,
+    )
+    variant = _sandbox_outcome_read(outcome)
+    delta = {
+        name: round(
+            float(getattr(variant.metrics, name)) - float(getattr(baseline, name)),
+            6,
+        )
+        for name in _METRIC_FIELDS
+    }
+
+    fragility_location = data.fragility_location_id
+    if fragility_location is None and len(data.supply) == 1:
+        fragility_location = next(iter(data.supply))
+    fragility: SandboxFragility | None = None
+    if fragility_location is not None:
+        try:
+            signal = sandbox_module.fragility_supply(
+                compiled,
+                job.scenario.value,
+                fragility_location,
+                time_limit_seconds=time_limit,
+                seed=seed,
+                horizon_extension_weeks=extension,
+                max_trials=data.fragility_max_trials,
+            )
+        except OrToolsUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except sandbox_module.SandboxError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"invalid fragility request: {exc}"
+            ) from exc
+        fragility = SandboxFragility(
+            location_id=signal.location_id,
+            base_supply=signal.base_supply,
+            feasible_floor=signal.feasible_floor,
+            breaking_new_supply=signal.breaking_new_supply,
+            smallest_supply_reduction=signal.smallest_supply_reduction,
+            trials=signal.trials,
+            bounded=signal.bounded,
+            note=signal.note,
+        )
+
+    record_audit(
+        db,
+        actor=actor or "system",
+        action="job.sandboxed",
+        entity_type="scenario_job",
+        entity_id=str(job.id),
+        after={"run_id": str(run.id), "applied": outcome.applied},
+    )
+    db.commit()
+    return SandboxRead(
+        run_id=run.id,
+        job_id=job.id,
+        source_scenario=job.scenario,
+        applied=outcome.applied,
+        baseline=baseline,
+        variant=variant,
+        delta=delta,
+        fragility=fragility,
+    )
+
+
+def query_schedule(
+    db: Session,
+    run_id,
+    job_id,
+    data: ScheduleQueryRequest,
+) -> ScheduleQueryResponse:
+    """Answer one closed-grammar query from persisted schedule evidence.
+
+    The query layer is model-free and makes no outbound request. A malformed or
+    unsupported query is rejected with 422; a well-formed query whose evidence
+    is missing is returned with ``answerable`` false rather than guessed.
+    """
+
+    run = get_run(db, run_id)
+    job = get_job(db, run_id, job_id)
+    if job.state != JobState.COMPLETED:
+        raise HTTPException(
+            status_code=409,
+            detail="job has not completed; there is no schedule to query",
+        )
+
+    access = list(
+        db.scalars(
+            select(ScheduleAccessRow)
+            .where(ScheduleAccessRow.job_id == job.id)
+            .order_by(ScheduleAccessRow.activity_id, ScheduleAccessRow.access_seq)
+        ).all()
+    )
+    occupancy = list(
+        db.scalars(
+            select(ScheduleOccupancyRow)
+            .where(ScheduleOccupancyRow.job_id == job.id)
+            .order_by(
+                ScheduleOccupancyRow.activity_id,
+                ScheduleOccupancyRow.week,
+                ScheduleOccupancyRow.location_id,
+            )
+        ).all()
+    )
+    contract_rows = list(
+        db.scalars(
+            select(ContractResultRow)
+            .where(ContractResultRow.job_id == job.id)
+            .order_by(ContractResultRow.contract_number)
+        ).all()
+    )
+    compiled = compile_instance(instance_for_run(run))
+    result = job.result or {}
+    breakdown = result.get("objective_breakdown") or {}
+    context = query_module.QueryContext(
+        scenario=job.scenario.value,
+        horizon_weeks=compiled.instance.horizon_weeks,
+        horizon_start=compiled.instance.horizon_start,
+        compiled=compiled,
+        access=tuple(
+            query_module.AccessEvidence(
+                activity_id=row.activity_id,
+                access_seq=row.access_seq,
+                week=row.week,
+                eclo=bool(row.eclo),
+                access_night=row.access_night,
+                physical_night=row.physical_night,
+            )
+            for row in access
+        ),
+        occupancy=tuple(
+            query_module.OccupancyEvidence(
+                activity_id=row.activity_id,
+                week=row.week,
+                location_id=row.location_id,
+                co_share_group=row.co_share_group,
+            )
+            for row in occupancy
+        ),
+        contracts=tuple(
+            query_module.ContractEvidence(
+                contract_number=row.contract_number,
+                simulated_completion_date=row.simulated_completion_date,
+                overrun_days=row.overrun_days,
+            )
+            for row in contract_rows
+        ),
+        binding_reasons={
+            key: tuple(value)
+            for key, value in (result.get("binding_reasons") or {}).items()
+        },
+        displacement_evidence=breakdown.get("displacement_evidence") or {},
+    )
+    try:
+        parsed = query_module.parse_query(data.query)
+    except query_module.QuerySyntaxError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"unsupported schedule query: {exc}"
+        ) from exc
+    answer = query_module.answer_query(context, parsed)
+    return ScheduleQueryResponse(
+        run_id=run.id,
+        job_id=job.id,
+        scenario=job.scenario,
+        query=answer.query,
+        kind=answer.kind,
+        answerable=answer.answerable,
+        answer=answer.answer,
+        evidence=dict(answer.evidence),
+        citations=[
+            ScheduleQueryCitation(source=citation.source, fields=dict(citation.fields))
+            for citation in answer.citations
+        ],
+    )
+
+
 def get_report(db: Session, run_id, job_id) -> ValidatorReportRow:
     """Return the persisted validator report or 409 when absent."""
 
@@ -951,6 +1272,7 @@ __all__ = [
     "create_job",
     "create_replan",
     "create_run",
+    "create_sandbox",
     "get_export",
     "get_job",
     "get_network",
@@ -961,4 +1283,5 @@ __all__ = [
     "instance_for_run",
     "list_jobs",
     "list_runs",
+    "query_schedule",
 ]
