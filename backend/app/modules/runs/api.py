@@ -17,6 +17,8 @@ from app.domain.enums import UserRole
 from app.domain.schemas import (
     NetworkResponse,
     PlanningRunRead,
+    ReplanRead,
+    ReplanRequest,
     ScenarioJobCreate,
     ScenarioJobRead,
     ScheduleResponse,
@@ -133,6 +135,32 @@ def get_report(
     """Return the independent validator report for a job."""
 
     return service.get_report(db, run_id, job_id)
+
+
+@router.post(
+    "/runs/{run_id}/jobs/{job_id}/replan",
+    response_model=ReplanRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_replan(
+    run_id: uuid.UUID,
+    job_id: uuid.UUID,
+    data: ReplanRequest,
+    db: Session = Depends(get_db),
+    user: CurrentUser = Depends(require_role(UserRole.PLANNER, UserRole.ADMIN)),
+) -> ReplanRead:
+    """Impact-assess a disruption and return a minimal-churn replan and diff."""
+
+    return service.create_replan(db, run_id, job_id, data, actor=user.id)
+
+
+@router.get("/runs/{run_id}/replans/{replan_id}", response_model=ReplanRead)
+def get_replan(
+    run_id: uuid.UUID, replan_id: uuid.UUID, db: Session = Depends(get_db)
+) -> ReplanRead:
+    """Fetch a persisted disruption impact assessment and replan diff."""
+
+    return service.get_replan(db, run_id, replan_id)
 
 
 @router.get("/runs/{run_id}/jobs/{job_id}/export")

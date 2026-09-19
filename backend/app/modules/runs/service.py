@@ -16,6 +16,7 @@ from app.domain.enums import JobState
 from app.domain.models import (
     ContractResultRow,
     PlanningRun,
+    ReplanRow,
     ScenarioJob,
     ScheduleAccessRow,
     ScheduleOccupancyRow,
@@ -23,7 +24,12 @@ from app.domain.models import (
     utcnow,
 )
 from app.domain.rail.errors import Issue, RailDataError
-from app.domain.schemas import ActivityExplanation, ActivitySpanRead, ScenarioJobCreate
+from app.domain.schemas import (
+    ActivityExplanation,
+    ActivitySpanRead,
+    ReplanRequest,
+    ScenarioJobCreate,
+)
 from app.modules.compiler import compile_instance, expand_all_routes
 from app.modules.export import (
     AccessRow,
@@ -36,7 +42,8 @@ from app.modules.export import (
 from app.modules.instance import INSTANCE_FILES, parse_mapping
 from app.modules.instance.service import build_planning_instance
 from app.modules.runs.queue import get_queue
-from app.modules.solver import reasons
+from app.modules.solver import OrToolsUnavailableError, reasons
+from app.modules.solver import replan as replan_module
 from app.modules.solver.possession import truly_co_sharable
 
 ACTIVE_STATES = (JobState.QUEUED, JobState.RUNNING, JobState.VALIDATING)
@@ -689,6 +696,188 @@ def get_schedule(db: Session, run_id, job_id) -> dict:
     }
 
 
+def _replan_payload(outcome: replan_module.ReplanSolution) -> dict:
+    """Serialise a replan outcome for JSON persistence.
+
+    A safe, feasible replan carries its placements and contract results. An
+    infeasible or witness-rejected outcome carries only the status and reasons,
+    so no unsafe schedule is ever stored.
+    """
+
+    result = outcome.result
+    status = result.status
+    if result.feasible and not outcome.safe:
+        status = "UNSAFE"
+    payload: dict = {
+        "feasible": bool(result.feasible and outcome.safe),
+        "status": status,
+        "horizon_weeks_used": result.horizon_weeks_used,
+        "infeasibility_reasons": list(result.infeasibility_reasons),
+        "objective_breakdown": outcome.objective_breakdown,
+        "binding_reasons": result.binding_reasons,
+        "churn": {
+            "moved_accesses": outcome.churn_moved,
+            "access_weight": outcome.churn_weight,
+        },
+    }
+    if result.feasible and outcome.safe:
+        payload["access"] = [row.model_dump(mode="json") for row in result.access]
+        payload["occupancy"] = [
+            row.model_dump(mode="json") for row in result.occupancy
+        ]
+        payload["contract_results"] = [
+            row.model_dump(mode="json") for row in result.contract_results
+        ]
+        payload["contract_completion"] = {
+            contract: completion.isoformat()
+            for contract, completion in result.contract_completion.items()
+        }
+        payload["physical_checks"] = (
+            outcome.witness.model_dump(mode="json") if outcome.witness else None
+        )
+    return payload
+
+
+def create_replan(
+    db: Session,
+    run_id,
+    job_id,
+    data: ReplanRequest,
+    *,
+    actor: str | None = None,
+) -> ReplanRow:
+    """Impact-assess a disruption and persist a minimal-churn replan.
+
+    The replan is computed synchronously against the completed source job. Its
+    schedule is kept in the replan row as JSON, so the three published CSVs of
+    the source job are never rewritten.
+    """
+
+    run = get_run(db, run_id)
+    job = get_job(db, run_id, job_id)
+    if job.state != JobState.COMPLETED:
+        raise HTTPException(
+            status_code=409,
+            detail="job has not completed; there is no schedule to replan",
+        )
+
+    access = list(
+        db.scalars(
+            select(ScheduleAccessRow)
+            .where(ScheduleAccessRow.job_id == job.id)
+            .order_by(ScheduleAccessRow.activity_id, ScheduleAccessRow.access_seq)
+        ).all()
+    )
+    occupancy = list(
+        db.scalars(
+            select(ScheduleOccupancyRow)
+            .where(ScheduleOccupancyRow.job_id == job.id)
+            .order_by(
+                ScheduleOccupancyRow.activity_id,
+                ScheduleOccupancyRow.week,
+                ScheduleOccupancyRow.location_id,
+            )
+        ).all()
+    )
+    contract_rows = list(
+        db.scalars(
+            select(ContractResultRow)
+            .where(ContractResultRow.job_id == job.id)
+            .order_by(ContractResultRow.contract_number)
+        ).all()
+    )
+
+    compiled = compile_instance(instance_for_run(run))
+    settings = get_settings()
+    time_limit = (
+        data.time_limit_seconds
+        or job.time_limit_seconds
+        or settings.solver_time_limit_seconds
+    )
+    seed = (
+        data.seed
+        if data.seed is not None
+        else (job.seed if job.seed is not None else settings.solver_seed)
+    )
+    extension = (
+        data.horizon_extension_weeks
+        if data.horizon_extension_weeks is not None
+        else settings.horizon_extension_weeks
+    )
+
+    impact = replan_module.assess_impact(
+        compiled, data.disruptions, access, occupancy, contract_rows
+    )
+    reference = replan_module.build_reference(access)
+    try:
+        outcome = replan_module.solve_replan(
+            compiled,
+            job.scenario.value,
+            data.disruptions,
+            reference,
+            time_limit_seconds=time_limit,
+            seed=seed,
+            horizon_extension_weeks=extension,
+        )
+    except OrToolsUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (RailDataError, KeyError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"invalid disruption: {exc}"
+        ) from exc
+
+    required = set(compiled.activities)
+    for item in data.disruptions:
+        if getattr(item, "kind", None) == "urgent_activity":
+            required.add(item.activity_id)
+    diff = replan_module.diff_against(
+        access, outcome.result, required_activities=required
+    )
+
+    status = outcome.result.status
+    if outcome.result.feasible and not outcome.safe:
+        status = "UNSAFE"
+    row = ReplanRow(
+        run_id=run.id,
+        job_id=job.id,
+        scenario=job.scenario.value,
+        status=status,
+        safe=bool(outcome.result.feasible and outcome.safe),
+        seed=seed,
+        churn_cost=outcome.churn_moved if outcome.safe else 0,
+        disruption=[item.model_dump(mode="json") for item in data.disruptions],
+        impact=impact,
+        diff=diff,
+        result=_replan_payload(outcome),
+        error=None,
+    )
+    db.add(row)
+    record_audit(
+        db,
+        actor=actor or "system",
+        action="replan.created",
+        entity_type="replan",
+        after={
+            "run_id": str(run.id),
+            "job_id": str(job.id),
+            "status": status,
+            "churn_cost": row.churn_cost,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def get_replan(db: Session, run_id, replan_id) -> ReplanRow:
+    """Fetch a persisted replan scoped to its run or raise 404."""
+
+    row = db.get(ReplanRow, replan_id)
+    if row is None or row.run_id != run_id:
+        raise HTTPException(status_code=404, detail="replan not found")
+    return row
+
+
 def get_report(db: Session, run_id, job_id) -> ValidatorReportRow:
     """Return the persisted validator report or 409 when absent."""
 
@@ -760,10 +949,12 @@ __all__ = [
     "TERMINAL_STATES",
     "cancel_job",
     "create_job",
+    "create_replan",
     "create_run",
     "get_export",
     "get_job",
     "get_network",
+    "get_replan",
     "get_report",
     "get_run",
     "get_schedule",

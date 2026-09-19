@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.enums import JobState, Scenario
+from app.domain.rail.nights import MAX_PHYSICAL_NIGHT, MIN_PHYSICAL_NIGHT
 from app.modules.validator.witness import PhysicalWitnessReport
 
 
@@ -174,17 +175,113 @@ class ValidatorReportRead(ReadModel):
     created_at: datetime
 
 
+class SupplyDrop(BaseModel):
+    """A location's nightly possession supply is cut mid-horizon."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["supply_drop"] = "supply_drop"
+    location_id: str
+    new_supply: int = Field(ge=0)
+
+
+class LocationUnavailable(BaseModel):
+    """A location cannot be occupied, for some weeks or the whole horizon."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["location_unavailable"] = "location_unavailable"
+    location_id: str
+    weeks: list[int] | None = Field(
+        default=None,
+        description="1-based weeks the location is closed; null means every week.",
+    )
+
+
+class NightUnavailable(BaseModel):
+    """A physical night slot cannot host work, for some weeks or the horizon."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["night_unavailable"] = "night_unavailable"
+    physical_night: int = Field(ge=MIN_PHYSICAL_NIGHT, le=MAX_PHYSICAL_NIGHT)
+    weeks: list[int] | None = Field(
+        default=None,
+        description="1-based weeks the night is closed; null means every week.",
+    )
+
+
+class UrgentActivityInjection(BaseModel):
+    """A new urgent activity is injected into an already-solved schedule."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["urgent_activity"] = "urgent_activity"
+    activity_id: str
+    contract_number: str
+    activity_type: str | None = None
+    start_location_id: str
+    end_location_id: str
+    total_accesses: int = Field(ge=1)
+    planned_start_date: date
+    predecessor_activity_id: str | None = None
+    activity_priority: int = Field(default=1, ge=1, le=3)
+
+
+Disruption = Annotated[
+    SupplyDrop | LocationUnavailable | NightUnavailable | UrgentActivityInjection,
+    Field(discriminator="kind"),
+]
+
+
+class ReplanRequest(BaseModel):
+    """One mid-horizon disruption set to impact-assess and replan against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disruptions: list[Disruption] = Field(min_length=1)
+    time_limit_seconds: int | None = Field(default=None, gt=0)
+    seed: int | None = Field(default=None, ge=0, le=2_147_483_647)
+    horizon_extension_weeks: int | None = Field(default=None, ge=0)
+
+
+class ReplanRead(ReadModel):
+    """The persisted impact assessment and minimal-churn replan diff."""
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    job_id: uuid.UUID
+    scenario: Scenario
+    status: str
+    safe: bool = False
+    seed: int | None = None
+    churn_cost: int = 0
+    disruption: list[dict[str, Any]] = Field(default_factory=list)
+    impact: dict[str, Any] = Field(default_factory=dict)
+    diff: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: datetime
+
+
 __all__ = [
     "ActivityExplanation",
     "ActivitySpanRead",
     "ContractResultRead",
+    "Disruption",
+    "LocationUnavailable",
     "NetworkResponse",
+    "NightUnavailable",
     "ParseSummary",
     "PlanningRunRead",
+    "ReplanRead",
+    "ReplanRequest",
     "ScenarioJobCreate",
     "ScenarioJobRead",
     "ScheduleAccessRead",
     "ScheduleOccupancyRead",
     "ScheduleResponse",
+    "SupplyDrop",
+    "UrgentActivityInjection",
     "ValidatorReportRead",
 ]

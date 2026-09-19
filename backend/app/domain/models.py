@@ -175,6 +175,34 @@ class ValidatorReportRow(IdTimestampMixin, Base):
     job: Mapped[ScenarioJob] = relationship(back_populates="validator_report")
 
 
+class ReplanRow(IdTimestampMixin, Base):
+    """One persisted disruption impact assessment and minimal-churn replan.
+
+    The replan keeps its own placements as JSON rather than reusing the
+    schedule-row tables, so a replan never rewrites the three published
+    submission CSVs of the source job.
+    """
+
+    __tablename__ = "replan_rows"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("planning_runs.id"), index=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("scenario_jobs.id"), index=True
+    )
+    scenario: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    safe: Mapped[bool] = mapped_column(Boolean, default=False)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    churn_cost: Mapped[int] = mapped_column(Integer, default=0)
+    disruption: Mapped[list] = mapped_column(JSON, default=list)
+    impact: Mapped[dict] = mapped_column(JSON, default=dict)
+    diff: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class AuditLog(IdTimestampMixin, Base):
     """Generic, authoritative audit trail of significant actions."""
 
