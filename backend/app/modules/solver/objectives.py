@@ -2,8 +2,8 @@
 
 The published scores are penalties (lower is better). They are scaled by ten so
 the activity-priority nudges (``+0.3``/``+0.2``/``+0.0``) stay integral inside
-CP-SAT, and a negligible unit-cost overshoot term removes gratuitous extra
-accesses without disturbing the scored terms.
+CP-SAT. The score multiplier exceeds the entire overshoot domain, so reducing
+workload overshoot can never sacrifice even 0.1 of the published score.
 """
 
 from __future__ import annotations
@@ -73,8 +73,9 @@ def build_objective(
         if key[3] == 1:
             terms.append(ECLO_NIGHT_COST * OBJECTIVE_SCALE * variable)
 
-    terms.append(OVERSHOOT_WEIGHT * variables.overshoot)
-    model.Minimize(sum(terms))
+    overshoot_bound = sum(3 * len(weeks) for weeks in variables.activity_weeks.values())
+    model.Minimize((overshoot_bound + 1) * sum(terms)
+                   + OVERSHOOT_WEIGHT * variables.overshoot)
 
     return ObjectiveTerms(
         activity_weights=activity_weights,

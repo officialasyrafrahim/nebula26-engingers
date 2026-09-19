@@ -9,6 +9,7 @@ result carries structured reasons instead.
 
 from __future__ import annotations
 
+import os
 import time
 from collections import defaultdict
 from typing import Any, Literal
@@ -234,6 +235,22 @@ def _attempt_budget(time_limit_seconds: float, remaining: float) -> float:
     return max(0.01, remaining * 0.5)
 
 
+def search_workers() -> int:
+    """Worker count for CP-SAT. Default 1 keeps runs deterministic; set
+    RAO_SEARCH_WORKERS up to 64 to use a portfolio on a larger host."""
+
+    raw = os.environ.get("RAO_SEARCH_WORKERS", "1")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            "RAO_SEARCH_WORKERS must be an integer between 1 and 64"
+        ) from exc
+    if not 1 <= value <= 64:
+        raise ValueError("RAO_SEARCH_WORKERS must be between 1 and 64")
+    return value
+
+
 def _greedy_hint_rows(
     compiled: CompiledInstance,
     variables: SolverVariables,
@@ -336,7 +353,7 @@ def _attempt(
 
     solver = cp.CpSolver()
     solver.parameters.random_seed = seed
-    solver.parameters.num_search_workers = 1
+    solver.parameters.num_search_workers = search_workers()
     solver.parameters.max_time_in_seconds = float(budget)
     solver.parameters.log_search_progress = False
     status = solver.Solve(model)

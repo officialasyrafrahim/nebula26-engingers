@@ -54,6 +54,7 @@ services:
       RAO_SOLVER_TIME_LIMIT_SECONDS: ${RAO_SOLVER_TIME_LIMIT_SECONDS:-300}
       RAO_SOLVER_SEED: ${RAO_SOLVER_SEED:-42}
       RAO_HORIZON_EXTENSION_WEEKS: ${RAO_HORIZON_EXTENSION_WEEKS:-6}
+      RAO_SEARCH_WORKERS: ${RAO_SEARCH_WORKERS:-1}
       # Optional LTA DataMall advisory context (api only). Empty disables it and
       # makes no outbound request. The key is never returned to the browser.
       LTA_DATAMALL_ACCOUNT_KEY: ${LTA_DATAMALL_ACCOUNT_KEY:-}
@@ -86,6 +87,7 @@ services:
       RAO_SOLVER_TIME_LIMIT_SECONDS: ${RAO_SOLVER_TIME_LIMIT_SECONDS:-300}
       RAO_SOLVER_SEED: ${RAO_SOLVER_SEED:-42}
       RAO_HORIZON_EXTENSION_WEEKS: ${RAO_HORIZON_EXTENSION_WEEKS:-6}
+      RAO_SEARCH_WORKERS: ${RAO_SEARCH_WORKERS:-1}
       # Empty selects the fallback oracle. The official validator is NOT shipped;
       # put it in deploy/validator and point this at its container path.
       RAO_VALIDATOR_COMMAND: ${RAO_VALIDATOR_COMMAND:-}

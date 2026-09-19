@@ -29,6 +29,7 @@ from app.modules.export.schemas import (
     render_occupancy,
     render_results,
 )
+
 # Import only for type checking. A runtime import here creates a cycle:
 # export.bundle -> solver package -> solver.engine -> validator package ->
 # validator.fallback_validator -> export.bundle. The annotation below is lazy

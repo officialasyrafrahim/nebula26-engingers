@@ -4,6 +4,8 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Make the published score strictly dominate the overshoot tie-break and add an opt-in multi-worker search portfolio.
+- Fix judge-facing truthfulness in the calendar, scenario comparison, replan panel and authority claims.
 - Break a circular import that crash-looped the solver worker container and add a fresh-interpreter guard.
 - Re-resolve the nginx api upstream so recreating the api container cannot 502 the site.
 - Add container CPU and memory allocations and DataMall key wiring to the Compose stack.
