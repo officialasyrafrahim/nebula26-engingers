@@ -360,7 +360,7 @@ def test_unknown_attempt_expands_horizon_while_time_remains(monkeypatch):
 
     horizons: list[int] = []
 
-    def fake_attempt(cp, compiled, policy, total_weeks, budget, seed):
+    def fake_attempt(cp, compiled, policy, total_weeks, budget, seed, *, incumbent=None):
         horizons.append(total_weeks)
         if len(horizons) == 1:
             return SolverResult(

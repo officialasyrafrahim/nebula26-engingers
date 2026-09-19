@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -37,7 +38,12 @@ from app.modules.solver.model import (
     DEFAULT_TIME_LIMIT_SECONDS,
     load_cp_model,
 )
-from app.modules.solver.objectives import activity_weight, build_objective
+from app.modules.solver.objectives import (
+    OBJECTIVE_SCALE,
+    ObjectiveTerms,
+    activity_weight,
+    build_objective,
+)
 from app.modules.solver.possession import truly_co_sharable
 from app.modules.solver.results import (
     AccessPlacement,
@@ -64,6 +70,238 @@ _DISPLACEMENT_REASON_CODES = frozenset(
         reasons.INTERCHANGE,
     }
 )
+
+
+@dataclass(slots=True)
+class _SeedIncumbent:
+    """A complete schedule reused as a starting point for a harder scenario.
+
+    Scenario C relaxes Scenario A, so any A-feasible schedule is C-feasible and
+    its published score is a valid upper bound for C. Carrying that schedule into
+    C as a hint plus an objective bound stops the larger C search from throwing a
+    known-good answer away.
+    """
+
+    assignment: dict[tuple[str, int, int, int], int]
+    score_bound: float
+    source: str
+
+
+def _incumbent_from_result(
+    result: SolverResult, *, source: str
+) -> _SeedIncumbent | None:
+    """Project a solved scenario into a hint assignment and score bound."""
+
+    weighted = result.objective_breakdown.get("priority_weighted_score")
+    if weighted is None:
+        return None
+    assignment: dict[tuple[str, int, int, int], int] = {}
+    for row in result.access:
+        if row.physical_night is None:
+            continue
+        assignment[(row.activity_id, row.week, row.physical_night, int(row.eclo))] = 1
+    if not assignment:
+        return None
+    return _SeedIncumbent(assignment, float(weighted), source)
+
+
+def _scenario_a_incumbent(
+    compiled: CompiledInstance,
+    time_limit_seconds: float,
+    seed: int,
+    horizon_extension_weeks: int,
+) -> tuple[_SeedIncumbent | None, float]:
+    """Solve Scenario A first and return its schedule for Scenario C seeding.
+
+    A's baseline solve spends half the budget in a single attempt. That is the
+    same first-attempt budget ``_solve`` gives a standalone A run, so the seeded
+    bound equals the score a caller sees for A and C can never appear worse than
+    A. If A does not fit the initial horizon the normal adaptive solve runs as a
+    fallback. Returns the incumbent (or ``None`` when A did not solve) and the
+    wall time spent, so the caller can hand the remainder of the budget to C.
+    """
+
+    budget = max(1.0, time_limit_seconds * 0.5)
+    a_policy = get_policy("A")
+    started = time.monotonic()
+    cp = load_cp_model()
+    initial_weeks = resolve_total_weeks(compiled, horizon_extension_weeks)
+    a_result = _attempt(cp, compiled, a_policy, initial_weeks, budget, seed)
+    if not a_result.feasible:
+        a_result = _solve(compiled, a_policy, budget, seed, horizon_extension_weeks)
+    elapsed = time.monotonic() - started
+    if not a_result.feasible:
+        return None, elapsed
+    return _incumbent_from_result(a_result, source="scenario_a"), elapsed
+
+
+def _relative_gap(objective: float, bound: float) -> float:
+    """Relative optimality gap for the logged search diagnostics."""
+
+    return max(0.0, (objective - bound) / max(1.0, abs(objective)))
+
+
+def _incumbent_uses_known_variables(
+    variables: SolverVariables, incumbent: _SeedIncumbent
+) -> bool:
+    """True when every hinted access exists in the model at this horizon."""
+
+    return all(key in variables.x for key in incumbent.assignment)
+
+
+def _apply_incumbent(
+    model: Any,
+    compiled: CompiledInstance,
+    variables: SolverVariables,
+    objective: ObjectiveTerms,
+    incumbent: _SeedIncumbent,
+) -> None:
+    """Seed a model with a known schedule and bound it by that schedule's score.
+
+    Hints are advisory and cover every structural variable derived from the
+    assignment. The bound is the load-bearing part. It forbids an answer worse
+    than the schedule already in hand.
+    """
+
+    assignment = incumbent.assignment
+    for key, variable in variables.x.items():
+        model.AddHint(variable, 1 if assignment.get(key, 0) else 0)
+
+    for (activity_id, week, night), variable in variables.present.items():
+        model.AddHint(
+            variable,
+            int(
+                any(
+                    assignment.get((activity_id, week, night, eclo), 0)
+                    for eclo in variables.eclo_values
+                )
+            ),
+        )
+
+    for (activity_id, week), variable in variables.week_present.items():
+        model.AddHint(
+            variable,
+            int(
+                any(
+                    assignment.get((activity_id, week, night, eclo), 0)
+                    for night in variables.activity_nights[activity_id]
+                    for eclo in variables.eclo_values
+                )
+            ),
+        )
+
+    for activity_id, variable in variables.first_week.items():
+        weeks = [week for (aid, week, _n, _e) in assignment if aid == activity_id]
+        model.AddHint(variable, min(weeks) if weeks else variables.total_weeks + 1)
+
+    for activity_id, variable in variables.last_week.items():
+        weeks = [week for (aid, week, _n, _e) in assignment if aid == activity_id]
+        model.AddHint(variable, max(weeks) if weeks else 0)
+
+    for activity_id in variables.activity_order:
+        for week in variables.weeks:
+            model.AddHint(
+                variables.present_at_or_after[(activity_id, week)],
+                int(
+                    any(
+                        aid == activity_id and wk >= week
+                        for (aid, wk, _n, _e) in assignment
+                    )
+                ),
+            )
+
+    activities_by_contract: dict[str, tuple[str, ...]] = defaultdict(tuple)
+    for activity_id in variables.activity_order:
+        contract = compiled.activities[activity_id].contract_number
+        activities_by_contract[contract] += (activity_id,)
+
+    for (contract, week, night), variable in variables.used_night.items():
+        model.AddHint(
+            variable,
+            int(
+                any(
+                    assignment.get((activity_id, week, night, eclo), 0)
+                    for activity_id in activities_by_contract.get(contract, ())
+                    for eclo in variables.eclo_values
+                )
+            ),
+        )
+
+    occupants_by_location: dict[str, frozenset[str]] = {
+        location_id: frozenset(occupants)
+        for location_id, occupants in compiled.physical_possession.location_occupants.items()
+    }
+
+    for (location_id, week, night), variable in variables.location_slot_used.items():
+        model.AddHint(
+            variable,
+            int(
+                any(
+                    assignment.get((activity_id, week, night, eclo), 0)
+                    for activity_id in occupants_by_location.get(location_id, frozenset())
+                    for eclo in variables.eclo_values
+                )
+            ),
+        )
+
+    for (location_id, week), variable in variables.position.items():
+        occupants = occupants_by_location.get(location_id, frozenset())
+        model.AddHint(
+            variable,
+            len(
+                {
+                    night
+                    for (aid, wk, night, _e) in assignment
+                    if wk == week and aid in occupants
+                }
+            ),
+        )
+
+    for variable in variables.excess.values():
+        model.AddHint(variable, 0)
+
+    for variable in variables.eclo_window.values():
+        model.AddHint(variable, 0)
+
+    for contract_number, variable in variables.completion_week.items():
+        activities = set(activities_by_contract.get(contract_number, ()))
+        weeks = [
+            week for (aid, week, _n, _e) in assignment if aid in activities
+        ]
+        model.AddHint(variable, max(weeks) if weeks else 1)
+
+    model.AddHint(variables.overshoot, 0)
+
+    model.Add(objective.scaled_terms_sum <= int(round(incumbent.score_bound * OBJECTIVE_SCALE)))
+
+
+def _fallback_assignment(
+    variables: SolverVariables,
+    incumbent: _SeedIncumbent | None,
+    greedy: GreedySolution | None,
+) -> tuple[dict[tuple[str, int, int, int], int], str] | None:
+    """Best known feasible assignment when CP-SAT times out without one.
+
+    The externally solved incumbent takes precedence over the greedy schedule
+    because it carries a validated score.
+    """
+
+    if incumbent is not None and _incumbent_uses_known_variables(variables, incumbent):
+        return dict(incumbent.assignment), incumbent.source
+    if greedy is not None:
+        return (
+            {
+                (
+                    placement.activity_id,
+                    placement.week,
+                    placement.physical_night,
+                    int(placement.eclo),
+                ): 1
+                for placement in greedy.placements
+            },
+            "greedy",
+        )
+    return None
 
 
 class RailPlanRequest(BaseModel):
@@ -171,8 +409,27 @@ def _solve(
 
     cp = load_cp_model()
     initial_weeks = resolve_total_weeks(compiled, horizon_extension_weeks)
+
+    # Scenario C relaxes Scenario A. Solve A first and reuse its schedule as a
+    # hint and an objective upper bound, so C starts at A's answer instead of
+    # rediscovering it in the larger C search space.
+    incumbent: _SeedIncumbent | None = None
+    if policy.scenario == "C":
+        incumbent, a_elapsed = _scenario_a_incumbent(
+            compiled, time_limit_seconds, seed, horizon_extension_weeks
+        )
+        time_limit_seconds = max(1.0, time_limit_seconds - a_elapsed)
+
     if horizon_extension_weeks <= 0:
-        last = _attempt(cp, compiled, policy, initial_weeks, time_limit_seconds, seed)
+        last = _attempt(
+            cp,
+            compiled,
+            policy,
+            initial_weeks,
+            time_limit_seconds,
+            seed,
+            incumbent=incumbent,
+        )
         return _finalize_flexible(last, policy, initial_weeks)
 
     growth_step = max(1, horizon_extension_weeks)
@@ -188,8 +445,16 @@ def _solve(
         remaining = deadline - time.monotonic()
         if last is not None and remaining <= 0.01:
             break
-        budget = _attempt_budget(time_limit_seconds, remaining)
-        last = _attempt(cp, compiled, policy, horizon, budget, seed)
+        if incumbent is not None and last is None:
+            # A seeded attempt already holds a valid schedule at the initial
+            # horizon, so spend the whole remaining budget improving it instead
+            # of reserving a retry slice for a horizon that already fits.
+            budget = max(0.01, remaining)
+        else:
+            budget = _attempt_budget(time_limit_seconds, remaining)
+        last = _attempt(
+            cp, compiled, policy, horizon, budget, seed, incumbent=incumbent
+        )
         if last.feasible:
             return last
         if policy.planned_completion_hard and last.status == "INFEASIBLE":
@@ -323,6 +588,8 @@ def _attempt(
     total_weeks: int,
     budget: float,
     seed: int,
+    *,
+    incumbent: _SeedIncumbent | None = None,
 ) -> SolverResult:
     """Build and solve one CP-SAT model at a fixed horizon."""
 
@@ -336,20 +603,27 @@ def _attempt(
     add_capacity_constraints(model, compiled, variables, policy)
     add_completion_constraints(model, compiled, variables, policy)
     add_eclo_constraints(model, compiled, variables, policy)
-    build_objective(model, compiled, variables, policy)
+    objective = build_objective(model, compiled, variables, policy)
 
-    greedy = _witness_checked_greedy(compiled, policy, variables, total_weeks)
-    if greedy is not None:
-        for placement in greedy.placements:
-            key = (
-                placement.activity_id,
-                placement.week,
-                placement.physical_night,
-                int(placement.eclo),
-            )
-            variable = variables.x.get(key)
-            if variable is not None:
-                model.AddHint(variable, 1)
+    greedy: GreedySolution | None = None
+    seed_source = "cp_sat"
+    if incumbent is not None:
+        _apply_incumbent(model, compiled, variables, objective, incumbent)
+        seed_source = incumbent.source
+    else:
+        greedy = _witness_checked_greedy(compiled, policy, variables, total_weeks)
+        if greedy is not None:
+            seed_source = "greedy"
+            for placement in greedy.placements:
+                key = (
+                    placement.activity_id,
+                    placement.week,
+                    placement.physical_night,
+                    int(placement.eclo),
+                )
+                variable = variables.x.get(key)
+                if variable is not None:
+                    model.AddHint(variable, 1)
 
     solver = cp.CpSolver()
     solver.parameters.random_seed = seed
@@ -371,22 +645,20 @@ def _attempt(
             status_name,
             overshoot=int(solver.Value(variables.overshoot)),
             solver_objective=solver.ObjectiveValue(),
+            incumbent_source=seed_source,
+            best_bound=solver.BestObjectiveBound(),
+            search_gap=_relative_gap(
+                solver.ObjectiveValue(), solver.BestObjectiveBound()
+            ),
         )
 
-    if status_name == "UNKNOWN" and greedy is not None:
-        # CP-SAT spent the budget before finding an incumbent. The greedy
-        # schedule already passed the independent witness gate, so publish it as
-        # the complete feasible schedule instead of an unfinished search. A
-        # proven INFEASIBLE is never overridden this way.
-        assignment = {
-            (
-                placement.activity_id,
-                placement.week,
-                placement.physical_night,
-                int(placement.eclo),
-            ): 1
-            for placement in greedy.placements
-        }
+    fallback = _fallback_assignment(variables, incumbent, greedy)
+    if status_name == "UNKNOWN" and fallback is not None:
+        # CP-SAT spent the budget before finding an incumbent. The seeded
+        # scenario-A schedule (or the greedy schedule) already satisfies the
+        # model, so publish it as the complete feasible schedule instead of an
+        # unfinished search. A proven INFEASIBLE is never overridden this way.
+        assignment, fallback_source = fallback
         return _extract_result(
             compiled,
             policy,
@@ -395,6 +667,7 @@ def _attempt(
             "FEASIBLE",
             overshoot=0,
             solver_objective=0.0,
+            incumbent_source=fallback_source,
         )
 
     return SolverResult(
@@ -418,6 +691,9 @@ def _extract_result(
     *,
     overshoot: int,
     solver_objective: float,
+    incumbent_source: str = "cp_sat",
+    best_bound: float | None = None,
+    search_gap: float | None = None,
 ) -> SolverResult:
     access_rows: list[AccessPlacement] = []
     occupied: list[tuple[str, int, str, int]] = []
@@ -491,6 +767,11 @@ def _extract_result(
     # dict of plain facts (weeks and constraint details) so the read model can
     # rebuild the explanation after a worker restart.
     breakdown["displacement_evidence"] = displacement_evidence
+    # Search provenance. Useful when a solve times out and an incumbent is
+    # published, and when comparing scenario quality.
+    breakdown["incumbent_source"] = incumbent_source
+    breakdown["best_bound"] = best_bound
+    breakdown["search_gap"] = search_gap
     horizon_used = max((row.week for row in access_rows), default=0)
 
     return SolverResult(

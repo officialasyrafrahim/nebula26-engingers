@@ -33,6 +33,7 @@ class ObjectiveTerms:
     excess_weight: int
     eclo_weight: int
     overshoot_weight: int
+    scaled_terms_sum: Any
 
 
 def activity_weight(compiled: CompiledInstance, activity_id: str) -> float:
@@ -74,7 +75,8 @@ def build_objective(
             terms.append(ECLO_NIGHT_COST * OBJECTIVE_SCALE * variable)
 
     overshoot_bound = sum(3 * len(weeks) for weeks in variables.activity_weeks.values())
-    model.Minimize((overshoot_bound + 1) * sum(terms)
+    scaled_terms_sum = sum(terms) if terms else 0
+    model.Minimize((overshoot_bound + 1) * scaled_terms_sum
                    + OVERSHOOT_WEIGHT * variables.overshoot)
 
     return ObjectiveTerms(
@@ -83,6 +85,7 @@ def build_objective(
         excess_weight=EXCESS_ACCESS_NIGHT_COST,
         eclo_weight=ECLO_NIGHT_COST,
         overshoot_weight=OVERSHOOT_WEIGHT,
+        scaled_terms_sum=scaled_terms_sum,
     )
 
 
