@@ -8,6 +8,7 @@ import {
   effectiveNight,
   nightSourceLabel,
   nightSourceOf,
+  selectionForPossession,
   type ActivitySelection,
   type CapacityStatus,
 } from "../lib/schematic";
@@ -63,8 +64,15 @@ export default function PossessionDrawer({
     (entry) => entry.contract_number === activity?.contract_number,
   );
   const summary = accessSummary(schedule.access, selection.activityId);
+  const weekRow =
+    selection.week != null
+      ? summary.rows.find((row) => row.week === selection.week)
+      : undefined;
+  const selectedNight =
+    selection.night ?? (weekRow ? effectiveNight(weekRow) : null);
   const memberships = coShareMemberships(
     schedule.occupancy,
+    schedule.access,
     selection.activityId,
     selection.week,
   );
@@ -79,12 +87,6 @@ export default function PossessionDrawer({
     (entry) => entry.activity_id === selection.activityId,
   );
 
-  const weekRow =
-    selection.week != null
-      ? summary.rows.find((row) => row.week === selection.week)
-      : undefined;
-  const selectedNight =
-    selection.night ?? (weekRow ? effectiveNight(weekRow) : null);
   const source = nightSourceOf(schedule.access);
   const nightQualifier = selectedNight != null ? ` (${nightSourceLabel(source)})` : "";
 
@@ -185,27 +187,29 @@ export default function PossessionDrawer({
                     </div>
                     <div className="drawer__group-members">
                       {membership.members.map((member) =>
-                        member === selection.activityId ? (
+                        member.activityId === selection.activityId ? (
                           <span
-                            key={member}
+                            key={member.activityId}
                             className="drawer__member drawer__member--self"
                           >
-                            {member}
+                            {member.activityId}
                           </span>
                         ) : (
                           <button
-                            key={member}
+                            key={member.activityId}
                             type="button"
                             className="drawer__member"
                             onClick={() =>
-                              onSelect({
-                                activityId: member,
-                                week: membership.week,
-                                night: selection.night,
-                              })
+                              onSelect(
+                                selectionForPossession(
+                                  member,
+                                  membership.week,
+                                  selectedNight,
+                                ),
+                              )
                             }
                           >
-                            {member}
+                            {member.activityId}
                           </button>
                         ),
                       )}

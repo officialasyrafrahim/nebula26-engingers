@@ -1,4 +1,9 @@
 import type { ScheduleExplanation } from "../api/types";
+import {
+  evidenceIsNeutral,
+  reasonEvidenceKeys,
+  reasonSupport,
+} from "../lib/explanations";
 import type { ActivitySelection } from "../lib/schematic";
 import Panel from "./Panel";
 
@@ -47,18 +52,6 @@ const EVIDENCE_LABELS: Record<string, string> = {
   capacity_limit: "Capacity limit",
 };
 
-// Evidence keys each displacement reason code must justify. When a code is
-// present but none of its keys are, the panel says so instead of implying a
-// cause the server did not record. Codes without an entry need no extra facts.
-const REASON_EVIDENCE_KEYS: Record<string, string[]> = {
-  BUFFER_CLOSURE: ["buffer_sectors", "closure_location_count"],
-  LIVE_MIRROR: ["opposite_bound_required", "mirrored_location_count"],
-  INTERCHANGE: ["interchange_location_count"],
-  POSSESSION_MIX: ["access_type", "mix_groups"],
-  CO_SHARE_PACKED: ["co_share_group", "co_share_partners"],
-  CAPACITY: ["capacity_location", "capacity_limit"],
-};
-
 function formatEvidenceValue(value: unknown): string {
   if (value == null) return "—";
   if (Array.isArray(value)) {
@@ -100,11 +93,12 @@ export default function ExplanationsPanel({
             const evidence = Object.entries(evidenceMap).sort(
               ([left], [right]) => left.localeCompare(right),
             );
-            const unsupported = reasonCodes.filter((code) => {
-              const keys = REASON_EVIDENCE_KEYS[code];
-              if (!keys) return false;
-              return !keys.some((key) => evidenceMap[key] != null);
-            });
+            // A reason is only supported when one of its facts actually
+            // confirms it. A false boolean or a zero count is recorded but does
+            // not count as proof, so it can never sit under a claimed cause as
+            // if it backed it.
+            const { unsupported } = reasonSupport(evidenceMap, reasonCodes);
+            const reasonKeys = reasonEvidenceKeys(reasonCodes);
             return (
               <li
                 key={entry.activity_id}
@@ -150,18 +144,34 @@ export default function ExplanationsPanel({
                 ) : null}
                 {unsupported.length > 0 ? (
                   <p className="explanations__unsupported">
-                    No supporting evidence recorded for {unsupported.join(", ")}. The
-                    solver reported the cause without local facts.
+                    No recorded evidence confirms {unsupported.join(", ")}. The solver
+                    reported the cause without supporting facts, so the zero or false
+                    values below are shown for completeness only.
                   </p>
                 ) : null}
                 {evidence.length > 0 ? (
                   <dl className="explanations__evidence">
-                    {evidence.map(([key, value]) => (
-                      <div key={key} className="explanations__fact">
-                        <dt>{EVIDENCE_LABELS[key] ?? key}</dt>
-                        <dd>{formatEvidenceValue(value)}</dd>
-                      </div>
-                    ))}
+                    {evidence.map(([key, value]) => {
+                      const neutral = evidenceIsNeutral(key, value, reasonKeys);
+                      return (
+                        <div
+                          key={key}
+                          className={`explanations__fact${
+                            neutral ? " explanations__fact--neutral" : ""
+                          }`}
+                        >
+                          <dt>{EVIDENCE_LABELS[key] ?? key}</dt>
+                          <dd>
+                            {formatEvidenceValue(value)}
+                            {neutral ? (
+                              <span className="explanations__fact-flag">
+                                does not support
+                              </span>
+                            ) : null}
+                          </dd>
+                        </div>
+                      );
+                    })}
                   </dl>
                 ) : null}
               </li>

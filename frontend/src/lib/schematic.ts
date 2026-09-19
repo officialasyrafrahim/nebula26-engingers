@@ -68,11 +68,16 @@ export interface CapacityReading {
   status: CapacityStatus;
 }
 
+export interface CoShareMember {
+  activityId: string;
+  night: number | null;
+}
+
 export interface ActivityGroupMembership {
   locationId: string;
   week: number;
   group: string;
-  members: string[];
+  members: CoShareMember[];
 }
 
 export interface AccessSummary {
@@ -333,7 +338,13 @@ export function spanOverlays(
     const span = spans[activityId];
     if (!span) continue;
     byActivity.set(activityId, span);
-    for (const locationId of span.closure_locations ?? []) add(locationId, "buffer");
+    // A closure with no buffer extension repeats the occupied route exactly.
+    // Occupied cells already carry the possession, so the safety-buffer layer
+    // must skip them rather than paint a buffer on the activity's own route.
+    const occupied = new Set(span.occupied_locations ?? []);
+    for (const locationId of span.closure_locations ?? []) {
+      if (!occupied.has(locationId)) add(locationId, "buffer");
+    }
     for (const locationId of span.mirrored_locations ?? []) add(locationId, "mirror");
     for (const locationId of span.interchange_locations ?? []) {
       add(locationId, "interchange");
@@ -341,6 +352,111 @@ export function spanOverlays(
   }
 
   return { available: true, byLocation, byActivity };
+}
+
+// The line code is the second segment of every location id, for example
+// ``SEC:ALP:H01_H02:EB`` or ``PLAT:BET:H01:WB``.
+export function lineOfLocation(locationId: string | null | undefined): string | null {
+  if (!locationId) return null;
+  const parts = locationId.split(":");
+  return parts.length >= 2 && parts[1] ? parts[1] : null;
+}
+
+// Every line an activity actually touches. The occupied route supplies the own
+// line; a Live activity that triggers the H01-H02 interchange also reaches the
+// other line through its compiled interchange closures. ECLO continuity is per
+// line, and a cross-line Live ECLO must satisfy both windows, so both lines are
+// counted here instead of only the activity's start location.
+export function linesForActivity(
+  network: NetworkResponse,
+  activityId: string,
+): string[] {
+  const lines = new Set<string>();
+  const span = network.activity_spans?.[activityId];
+  const occupied = span?.occupied_locations?.length
+    ? span.occupied_locations
+    : (network.routes?.[activityId] ?? []);
+  for (const locationId of occupied) {
+    const line = lineOfLocation(locationId);
+    if (line) lines.add(line);
+  }
+  for (const locationId of span?.interchange_locations ?? []) {
+    const line = lineOfLocation(locationId);
+    if (line) lines.add(line);
+  }
+  if (lines.size === 0) {
+    const activity = network.activities?.find(
+      (entry) => entry.activity_id === activityId,
+    );
+    for (const locationId of [
+      activity?.start_location_id,
+      activity?.end_location_id,
+    ]) {
+      const line = lineOfLocation(locationId);
+      if (line) lines.add(line);
+    }
+  }
+  return [...lines].sort();
+}
+
+// A possession chip stands for one activity on one location-week. When the
+// board is showing all nights the chip's own physical/local night is the honest
+// link; only fall back to the board's active night when the member has none.
+export function selectionForPossession(
+  member: Pick<PossessionMember, "activityId" | "night">,
+  week: number,
+  activeNight: number | null,
+): ActivitySelection {
+  return {
+    activityId: member.activityId,
+    week,
+    night: member.night ?? activeNight,
+  };
+}
+
+// Every location-week with a recorded possession, re-derived from the published
+// occupancy and supply table. The validator's capacity_hotspots feed only lists
+// location-weeks *above* supply, so this projection is what lets the board show
+// a location-week that sits exactly at capacity without inventing values.
+export function capacityReadings(
+  network: NetworkResponse,
+  occupancy: ScheduleOccupancy[],
+  scenario: string,
+): CapacityReading[] {
+  const groupsByLocationWeek = new Map<string, Set<string>>();
+  for (const row of occupancy) {
+    const key = `${row.location_id}::${row.week}`;
+    const groups = groupsByLocationWeek.get(key) ?? new Set<string>();
+    groups.add(row.co_share_group || "—");
+    groupsByLocationWeek.set(key, groups);
+  }
+
+  const readings: CapacityReading[] = [];
+  for (const [key, groups] of groupsByLocationWeek) {
+    const separator = key.lastIndexOf("::");
+    const locationId = key.slice(0, separator);
+    const week = Number(key.slice(separator + 2));
+    const used = groups.size;
+    const capacity = locationCapacity(network, locationId);
+    readings.push({
+      locationId,
+      week,
+      used,
+      capacity,
+      excess: Math.max(0, used - capacity),
+      status: capacityStatus(used, capacity, scenario),
+    });
+  }
+
+  return readings.sort((left, right) =>
+    left.week === right.week
+      ? left.locationId.localeCompare(right.locationId)
+      : left.week - right.week,
+  );
+}
+
+export function isAtCapacity(reading: CapacityReading): boolean {
+  return reading.used > 0 && reading.capacity > 0 && reading.used === reading.capacity;
 }
 
 export function accessSummary(
@@ -359,11 +475,24 @@ export function accessSummary(
   return { scheduled: rows.length, eclo, yieldUnits, rows };
 }
 
+// Co-share membership for the drawer. A co-share group can mix contract-local
+// nights, so each member carries its own effective night rather than inheriting
+// the selected activity's night. The caller falls back to the group/board night
+// only when a member genuinely has no recorded night.
 export function coShareMemberships(
   occupancy: ScheduleOccupancy[],
+  access: ScheduleAccess[],
   activityId: string,
   week: number | null,
 ): ActivityGroupMembership[] {
+  const nightByActivityWeek = new Map<string, number>();
+  for (const row of access) {
+    const key = `${row.activity_id}::${row.week}`;
+    if (!nightByActivityWeek.has(key)) {
+      nightByActivityWeek.set(key, effectiveNight(row));
+    }
+  }
+
   const mine = occupancy.filter(
     (row) =>
       row.activity_id === activityId && (week == null || row.week === week),
@@ -375,7 +504,7 @@ export function coShareMemberships(
     const key = `${row.location_id}::${row.week}::${group}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const members = [
+    const members: CoShareMember[] = [
       ...new Set(
         occupancy
           .filter(
@@ -386,7 +515,12 @@ export function coShareMemberships(
           )
           .map((other) => other.activity_id),
       ),
-    ].sort((left, right) => left.localeCompare(right));
+    ]
+      .sort((left, right) => left.localeCompare(right))
+      .map((memberId) => ({
+        activityId: memberId,
+        night: nightByActivityWeek.get(`${memberId}::${row.week}`) ?? null,
+      }));
     memberships.push({
       locationId: row.location_id,
       week: row.week,

@@ -1910,6 +1910,46 @@ code {
   color: var(--ink-dim);
 }
 
+.hotspots__at-capacity {
+  margin-top: 12px;
+}
+
+.hotspots__pills {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.hotspots__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--amber-dim);
+  border-radius: 999px;
+  background: rgba(242, 169, 0, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--amber);
+}
+
+.hotspots__pill-week {
+  color: var(--ink-dim);
+}
+
+.hotspots__pill-count {
+  color: var(--ink);
+}
+
+.hotspots__source {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
 .cell--wrap {
   max-width: 260px;
 }
@@ -2176,6 +2216,24 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* A fact recorded next to a reason but with a false/zero value. It is shown for
+   completeness, never as proof, so it is dimmed and tagged explicitly. */
+.explanations__fact--neutral dt,
+.explanations__fact--neutral dd {
+  color: var(--ink-faint);
+}
+
+.explanations__fact-flag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--amber);
+}
+
 .explanations__unsupported {
   font-size: 0.72rem;
   color: var(--amber);
@@ -2393,6 +2451,25 @@ code {
   font-size: 0.68rem;
   color: var(--ink);
   white-space: nowrap;
+}
+
+.schematic__node-button {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--amber);
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+.schematic__node-button:hover {
+  color: var(--ink);
 }
 
 .schematic__mark {

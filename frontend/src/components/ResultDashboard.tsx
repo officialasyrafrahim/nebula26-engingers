@@ -3,7 +3,7 @@ import type {
   ScheduleResponse,
   ValidatorReport,
 } from "../api/types";
-import type { ActivitySelection } from "../lib/schematic";
+import { capacityReadings, isAtCapacity, type ActivitySelection } from "../lib/schematic";
 import ActivityTimeline from "./ActivityTimeline";
 import AssurancePanel from "./AssurancePanel";
 import ContractTable from "./ContractTable";
@@ -45,6 +45,11 @@ export default function ResultDashboard({
   const selectedActivityId = selection?.activityId ?? null;
 
   if (section === "validate") {
+    const atCapacity = capacityReadings(
+      network,
+      schedule.occupancy,
+      schedule.scenario,
+    ).filter(isAtCapacity);
     return (
       <div className="dashboard" aria-label={`Scenario ${scenario} validation dashboard`}>
         <AssurancePanel report={report} physicalChecks={schedule.physical_checks} />
@@ -54,10 +59,14 @@ export default function ResultDashboard({
           <ScorePanel scores={report.soft_scores} scenario={scenario} />
         </div>
 
-        <ViolationsPanel violations={report.hard_violations} />
+        <ViolationsPanel
+          violations={report.hard_violations}
+          authority={report.authority}
+        />
 
         <HotspotsPanel
           hotspots={report.detail.capacity_hotspots}
+          atCapacity={atCapacity}
           scenario={schedule.scenario}
           hardViolations={report.hard_violations}
         />
@@ -104,7 +113,7 @@ export default function ResultDashboard({
 
       <EcloPanel
         access={schedule.access}
-        activities={network.activities}
+        network={network}
         detail={report.detail}
         scenario={scenario}
       />

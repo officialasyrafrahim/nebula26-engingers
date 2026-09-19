@@ -1,8 +1,10 @@
 import type { CapacityHotspot, HardViolation } from "../api/types";
+import type { CapacityReading } from "../lib/schematic";
 import Panel from "./Panel";
 
 interface HotspotsPanelProps {
   hotspots: CapacityHotspot[];
+  atCapacity?: CapacityReading[];
   scenario?: string;
   hardViolations?: HardViolation[];
 }
@@ -55,6 +57,7 @@ function HotspotRow({
 
 export default function HotspotsPanel({
   hotspots,
+  atCapacity = [],
   scenario,
   hardViolations = [],
 }: HotspotsPanelProps) {
@@ -68,7 +71,22 @@ export default function HotspotsPanel({
   );
   const hardCount = hardSet.size;
   const softCount = hotspots.length - hardCount;
-  const tone = hardCount > 0 ? "danger" : hotspots.length > 0 ? "warn" : "ok";
+
+  // The validator's hotspot feed only lists location-weeks strictly above
+  // supply. Exactly-at-capacity rows are projected from the published occupancy
+  // and the supply table, never invented, so the board can show the last drop of
+  // headroom disappearing.
+  const atCapacityRows = atCapacity.filter(
+    (reading) => reading.used > 0 && reading.used === reading.capacity,
+  );
+
+  const tone =
+    hardCount > 0
+      ? "danger"
+      : hotspots.length > 0 || atCapacityRows.length > 0
+        ? "warn"
+        : "ok";
+
   return (
     <Panel
       title="Capacity hotspots"
@@ -76,15 +94,18 @@ export default function HotspotsPanel({
       tone={tone}
       actions={
         <span className="panel__meter">
-          {hotspots.length} location{hotspots.length === 1 ? "" : "s"} · excess {totalExcess}
+          {hotspots.length} over · {atCapacityRows.length} at capacity · excess{" "}
+          {totalExcess}
         </span>
       }
     >
-      {hotspots.length === 0 ? (
+      {hotspots.length === 0 && atCapacityRows.length === 0 ? (
         <p className="empty empty--ok">
-          No location-week exceeds its nominal supply capacity.
+          No location-week reaches or exceeds its nominal supply capacity.
         </p>
-      ) : (
+      ) : null}
+
+      {hotspots.length > 0 ? (
         <div className="table-wrap">
           <table className="table">
             <caption className="sr-only">
@@ -114,9 +135,34 @@ export default function HotspotsPanel({
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
-      {hotspots.length > 0 ? (
+      {atCapacityRows.length > 0 ? (
+        <div className="hotspots__at-capacity">
+          <h3 className="subhead">At capacity · no headroom left</h3>
+          <ul className="hotspots__pills" aria-label="Location-weeks at supply capacity">
+            {atCapacityRows.map((reading) => (
+              <li
+                key={`${reading.locationId}-${reading.week}`}
+                className="hotspots__pill"
+              >
+                <code>{reading.locationId}</code>
+                <span className="hotspots__pill-week">W{reading.week}</span>
+                <span className="hotspots__pill-count">
+                  {reading.used}/{reading.capacity}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="hotspots__source">
+            Derived from the published schedule occupancy and the supply table.
+            The validator hotspot feed reports only location-weeks above supply,
+            so at-capacity rows would otherwise be invisible.
+          </p>
+        </div>
+      ) : null}
+
+      {hotspots.length > 0 || atCapacityRows.length > 0 ? (
         <p className="hotspots__legend">
           {softCount > 0
             ? "Amber excess is soft within the scenario allowance and does not block export."
@@ -124,6 +170,9 @@ export default function HotspotsPanel({
           {softCount > 0 && hardCount > 0 ? " " : ""}
           {hardCount > 0
             ? "Red excess is a hard capacity violation and blocks submission."
+            : null}
+          {atCapacityRows.length > 0
+            ? `${softCount > 0 || hardCount > 0 ? " " : ""}At-capacity rows use the full supply with no spare possession.`
             : null}
         </p>
       ) : null}

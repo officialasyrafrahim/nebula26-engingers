@@ -1,9 +1,20 @@
-import type { HardViolation } from "../api/types";
+import type { Authority, HardViolation } from "../api/types";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
 interface ViolationsPanelProps {
   violations: HardViolation[];
+  authority?: Authority | string;
+}
+
+function cleanSummary(authority?: Authority | string): string {
+  if (authority === "fallback") {
+    return "The fallback validator found no hard-rule violations. This is a provisional interpretation of the published rules, not physical proof or official acceptance.";
+  }
+  if (authority === "official") {
+    return "The official validator found no hard-rule violations. The schedule is clean under the official authority.";
+  }
+  return "No hard-rule violations reported.";
 }
 
 const RULE_LABELS: Record<string, string> = {
@@ -22,7 +33,10 @@ const RULE_LABELS: Record<string, string> = {
   eclo_window: "ECLO continuity window",
 };
 
-export default function ViolationsPanel({ violations }: ViolationsPanelProps) {
+export default function ViolationsPanel({
+  violations,
+  authority,
+}: ViolationsPanelProps) {
   const grouped = new Map<string, HardViolation[]>();
   for (const violation of violations) {
     const bucket = grouped.get(violation.rule) ?? [];
@@ -49,9 +63,7 @@ export default function ViolationsPanel({ violations }: ViolationsPanelProps) {
       }
     >
       {violations.length === 0 ? (
-        <p className="empty empty--ok">
-          No hard-rule violations. The schedule is physically and contractually clean.
-        </p>
+        <p className="empty empty--ok">{cleanSummary(authority)}</p>
       ) : (
         <div className="violations">
           {[...grouped.entries()].map(([rule, items]) => (

@@ -1,41 +1,48 @@
-import type { Activity, ScheduleAccess, ValidatorDetail } from "../api/types";
+import type {
+  NetworkResponse,
+  ScheduleAccess,
+  ValidatorDetail,
+} from "../api/types";
+import { linesForActivity } from "../lib/schematic";
 import { formatNumber } from "../lib/format";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
 interface EcloPanelProps {
   access: ScheduleAccess[];
-  activities: Activity[];
+  network: NetworkResponse;
   detail: ValidatorDetail;
   scenario: string;
 }
 
-function lineOf(locationId: string | undefined): string {
-  if (!locationId) return "unknown";
-  const parts = locationId.split(":");
-  return parts.length >= 2 ? parts[1] : "unknown";
-}
-
 export default function EcloPanel({
   access,
-  activities,
+  network,
   detail,
   scenario,
 }: EcloPanelProps) {
-  const lineByActivity = new Map(
-    activities.map((activity) => [
-      activity.activity_id,
-      lineOf(activity.start_location_id),
-    ]),
-  );
-
   const ecloRows = access.filter((row) => row.eclo);
+
+  // Count every line the ECLO work actually reaches: the full occupied route
+  // plus the other line for a cross-line Live interchange. Using only the
+  // activity's start location under-counts Live work that spans H01-H02.
+  const linesByActivity = new Map<string, string[]>();
+  const linesFor = (activityId: string): string[] => {
+    const cached = linesByActivity.get(activityId);
+    if (cached) return cached;
+    const lines = linesForActivity(network, activityId);
+    linesByActivity.set(activityId, lines);
+    return lines;
+  };
+
   const byLine = new Map<string, ScheduleAccess[]>();
   for (const row of ecloRows) {
-    const line = lineByActivity.get(row.activity_id) ?? "unknown";
-    const bucket = byLine.get(line) ?? [];
-    bucket.push(row);
-    byLine.set(line, bucket);
+    const lines = linesFor(row.activity_id);
+    for (const line of lines.length > 0 ? lines : ["unknown"]) {
+      const bucket = byLine.get(line) ?? [];
+      bucket.push(row);
+      byLine.set(line, bucket);
+    }
   }
 
   const ecloNights = detail.eclo_nights || ecloRows.length;

@@ -4,7 +4,7 @@ import type {
   PhysicalCheckReport,
   ValidatorReport,
 } from "../api/types";
-import { checkDetailText } from "../lib/assurance";
+import { checkDetailText, deriveAssurance } from "../lib/assurance";
 import Panel from "./Panel";
 import SignalLamp, { type LampTone } from "./SignalLamp";
 
@@ -75,55 +75,20 @@ export default function AssurancePanel({
   report,
   physicalChecks,
 }: AssurancePanelProps) {
-  const officialAuthority = report.authority === "official";
-  const fallbackAuthority = report.authority === "fallback";
-
-  const validatorPassed = report.feasible && report.workload_complete;
-
   const physicalState: LayerState =
     physicalChecks == null ? "unavailable" : physicalChecks.passed ? "pass" : "fail";
-  const fallbackState: LayerState = fallbackAuthority
-    ? validatorPassed
-      ? "pass"
-      : "fail"
-    : "unavailable";
-  const officialState: LayerState = officialAuthority
-    ? validatorPassed
-      ? "pass"
-      : "fail"
-    : "unavailable";
 
-  let status: OverallStatus;
-  const failingLayers: string[] = [];
-  if (officialAuthority) {
-    if (physicalState === "pass" && validatorPassed) {
-      status = "OFFICIALLY VALIDATED";
-    } else {
-      status = "NOT VALIDATED";
-      if (physicalState !== "pass") {
-        failingLayers.push(
-          physicalState === "unavailable"
-            ? "physical schedule checks (not recorded)"
-            : "physical schedule checks",
-        );
-      }
-      if (!validatorPassed) failingLayers.push("official validation");
-    }
-  } else if (fallbackAuthority && physicalState === "pass" && validatorPassed) {
-    status = "PROVISIONAL";
-  } else {
-    status = "NOT VALIDATED";
-    if (physicalState !== "pass") {
-      failingLayers.push(
-        physicalState === "unavailable"
-          ? "physical schedule checks (not recorded)"
-          : "physical schedule checks",
-      );
-    }
-    if (!(fallbackAuthority && validatorPassed)) {
-      failingLayers.push("fallback schema validation");
-    }
-  }
+  const outcome = deriveAssurance({
+    authority: report.authority,
+    validatorSource: report.validator_source,
+    feasible: report.feasible,
+    workloadComplete: report.workload_complete,
+    physical: physicalState,
+  });
+  const fallbackState: LayerState = outcome.fallback;
+  const officialState: LayerState = outcome.official;
+  const status: OverallStatus = outcome.status;
+  const failingLayers = outcome.failingLayers;
 
   const verdictTone: "ok" | "warn" | "danger" =
     status === "OFFICIALLY VALIDATED"
@@ -155,14 +120,18 @@ export default function AssurancePanel({
 
   const fallbackDetail =
     fallbackState === "unavailable"
-      ? "Not used for this run because the official validator was the recorded authority."
+      ? report.authority === "official"
+        ? "Not used for this run because the official validator was the recorded authority."
+        : "Not available for this run, so a fallback interpretation cannot be claimed."
       : fallbackState === "pass"
-        ? "The exported CSVs conform to the current interpretation of the published rules. This interpretation is provisional and is not the official validator."
+        ? "The exported CSVs conform to the current interpretation of the published rules. This interpretation is provisional, is not the official validator and is not physical proof."
         : "The exported CSVs breach the current interpretation of the published rules.";
 
   const officialDetail =
     officialState === "unavailable"
-      ? "Not available: no official validator was configured for this run, so official acceptance cannot be claimed."
+      ? report.authority === "fallback"
+        ? "Not available: no official validator was configured for this run, so official acceptance cannot be claimed."
+        : "Not available for this run, so official acceptance cannot be claimed."
       : officialState === "pass"
         ? "The official validator accepted feasibility and full workload."
         : "The official validator rejected this submission on feasibility or workload completeness.";
@@ -186,6 +155,18 @@ export default function AssurancePanel({
       <p className="assurance__summary">
         Each layer proves something different. One is never presented as another.
       </p>
+
+      {outcome.authorityMismatch ? (
+        <div className="notice notice--danger" role="alert">
+          <span className="notice__title">Validator authority disagreement</span>
+          <p>
+            The report claims authority &quot;{report.authority}&quot; but was
+            recorded by &quot;{report.validator_source}&quot;. The submission is
+            treated as not validated rather than choosing one claim over the
+            other.
+          </p>
+        </div>
+      ) : null}
 
       <ul className="assurance__rows" aria-label="Validation assurance layers">
         <LayerRow

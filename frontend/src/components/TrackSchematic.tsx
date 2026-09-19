@@ -14,6 +14,7 @@ import {
   nightsForWeek,
   occupancyForWeek,
   scheduledWeeks,
+  selectionForPossession,
   spanOverlays,
   type ActivitySelection,
   type CapacityReading,
@@ -64,6 +65,7 @@ function SchematicCell({
   spanLayers,
   spansAvailable,
   routeHighlight,
+  linkedActivityId,
   selectedActivityId,
   week,
   night,
@@ -76,6 +78,7 @@ function SchematicCell({
   spanLayers: ReadonlySet<SpanLayer>;
   spansAvailable: boolean;
   routeHighlight: boolean;
+  linkedActivityId: string | null;
   selectedActivityId: string | null;
   week: number;
   night: number | null;
@@ -85,12 +88,17 @@ function SchematicCell({
   const selected = groups.some((group) =>
     group.members.some((member) => member.activityId === selectedActivityId),
   );
+  // A route cell with no possession is still selectable when it belongs to the
+  // activity currently selected, so the highlighted segment and the selection
+  // stay linked instead of the segment looking inert.
+  const linked = linkedActivityId != null && !possessed;
   const classes = ["schematic__cell", `schematic__cell--${node.kind}`];
   if (node.isInterchange) classes.push("schematic__cell--interchange");
   if (node.isShared) classes.push("schematic__cell--shared");
   if (possessed) classes.push("schematic__cell--possessed");
   else if (routeHighlight) classes.push("schematic__cell--route");
-  if (selected) classes.push("schematic__cell--selected");
+  if (linked) classes.push("schematic__cell--linked");
+  if (selected || linked) classes.push("schematic__cell--selected");
 
   return (
     <li className={classes.join(" ")} title={node.locationId}>
@@ -107,7 +115,18 @@ function SchematicCell({
         />
       ) : null}
 
-      <span className="schematic__node-label">{node.label}</span>
+      {linked && linkedActivityId ? (
+        <button
+          type="button"
+          className="schematic__node-button"
+          title={`Select ${linkedActivityId} at ${node.label}`}
+          onClick={() => onSelect({ activityId: linkedActivityId, week, night })}
+        >
+          {node.label}
+        </button>
+      ) : (
+        <span className="schematic__node-label">{node.label}</span>
+      )}
 
       {layers.capacity && reading.used > 0 ? (
         <span
@@ -137,7 +156,7 @@ function SchematicCell({
                   }`}
                   style={{ "--chip-hue": hueFor(member.activityId) } as CSSProperties}
                   onClick={() =>
-                    onSelect({ activityId: member.activityId, week, night })
+                    onSelect(selectionForPossession(member, week, night))
                   }
                   title={`${member.activityId}${
                     member.night != null ? ` · night ${member.night}` : ""
@@ -187,6 +206,19 @@ export default function TrackSchematic({
     setNight("all");
   }, [schedule.job_id]);
 
+  // Selections made from the timeline, explanations or drawer carry a week and
+  // often a night. The board follows them so the filter and the linked evidence
+  // never describe different possessions. A night that does not exist in the
+  // selected week falls back to all nights instead of leaving an invalid filter.
+  useEffect(() => {
+    if (!selection) return;
+    if (selection.week != null) setWeek(selection.week);
+    if (selection.night != null && selection.week != null) {
+      const validNights = nightsForWeek(schedule.access, selection.week);
+      setNight(validNights.includes(selection.night) ? selection.night : "all");
+    }
+  }, [selection?.activityId, selection?.week, selection?.night, schedule.access]);
+
   const schematic = useMemo(() => buildSchematic(network), [network]);
 
   const groupsByLocation = useMemo(
@@ -222,6 +254,15 @@ export default function TrackSchematic({
     }
     return set;
   }, [activeIds, network.routes]);
+
+  const selectedRouteLocations = useMemo(() => {
+    if (!selection) return new Set<string>();
+    const span = network.activity_spans?.[selection.activityId];
+    const route = span?.occupied_locations?.length
+      ? span.occupied_locations
+      : (network.routes?.[selection.activityId] ?? []);
+    return new Set(route);
+  }, [selection, network.activity_spans, network.routes]);
 
   const nightSource = useMemo(() => nightSourceOf(schedule.access), [schedule.access]);
 
@@ -278,7 +319,7 @@ export default function TrackSchematic({
           <label htmlFor="schematic-night">Night</label>
           <select
             id="schematic-night"
-            value={night === "all" ? "all" : String(night)}
+            value={activeNight == null ? "all" : String(activeNight)}
             onChange={(event) =>
               setNight(event.target.value === "all" ? "all" : Number(event.target.value))
             }
@@ -358,6 +399,11 @@ export default function TrackSchematic({
                       spanLayers={spans.byLocation.get(node.locationId) ?? new Set<SpanLayer>()}
                       spansAvailable={spans.available}
                       routeHighlight={routeLocations.has(node.locationId)}
+                      linkedActivityId={
+                        selectedRouteLocations.has(node.locationId)
+                          ? selectedActivityId
+                          : null
+                      }
                       selectedActivityId={selectedActivityId}
                       week={activeWeek}
                       night={activeNight}

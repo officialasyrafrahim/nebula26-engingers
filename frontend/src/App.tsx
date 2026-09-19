@@ -372,16 +372,20 @@ export default function App() {
       if (job.state === "COMPLETED") {
         activateStage("validate", true);
         void loadResults(job.run_id, job.id);
-      } else if (isActiveJob(job.state)) {
-        resultRequestRef.current += 1;
-        setResultsLoading(false);
-        activateStage("optimise", true);
-        setScheduleData(null);
-        setReportData(null);
-        setLoadedJobId(null);
-        setResultError(null);
-        setSelection(null);
+        return;
       }
+      // Any non-completed job (active or terminal failure) must clear the last
+      // completed schedule, report and export. Otherwise a FAILED, TIMED_OUT,
+      // INFEASIBLE or CANCELLED job keeps showing another job's validated
+      // evidence and assurance.
+      resultRequestRef.current += 1;
+      setResultsLoading(false);
+      activateStage("optimise", true);
+      setScheduleData(null);
+      setReportData(null);
+      setLoadedJobId(null);
+      setResultError(null);
+      setSelection(null);
     },
     [activateStage, loadResults],
   );
