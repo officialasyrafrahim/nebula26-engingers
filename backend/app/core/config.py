@@ -9,6 +9,7 @@ command.
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,23 @@ class Settings(BaseSettings):
 
     start_inprocess_worker: bool = True
     worker_poll_seconds: float = 1.0
+
+    # Optional LTA DataMall advisory context. The account key is a process
+    # secret: it is read here and never serialised into an API response. With
+    # no key the DataMall module stays off and makes no outbound request.
+    lta_datamall_account_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "LTA_DATAMALL_ACCOUNT_KEY",
+            "RAO_LTA_DATAMALL_ACCOUNT_KEY",
+        ),
+    )
+    lta_datamall_base_url: str = "https://datamall2.mytransport.sg/ltaodataservice"
+    lta_datamall_timeout_seconds: float = 5.0
+    lta_datamall_cache_ttl_seconds: int = 300
+    # Hard cap on a monthly Passenger Volume archive download so a bulk dataset
+    # can never be pulled into memory unbounded.
+    lta_datamall_max_archive_bytes: int = 25_000_000
 
 
 @lru_cache

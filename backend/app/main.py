@@ -10,9 +10,10 @@ from fastapi import FastAPI
 from app.core.config import get_settings
 from app.core.db import initialize_database
 from app.domain import models as _models  # noqa: F401  (register ORM tables)
+from app.modules.datamall.api import router as datamall_router
 from app.modules.runs.api import router as runs_router
 
-ROUTERS = (runs_router,)
+ROUTERS = (runs_router, datamall_router)
 
 
 def _inprocess_worker_loop() -> None:
