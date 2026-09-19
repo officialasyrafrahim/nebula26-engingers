@@ -36,6 +36,7 @@ from app.modules.compiler import compile_instance, get_policy
 from app.modules.export import (
     SubmissionBundle,
     bundle_from_solver_result,
+    load_bundle,
     write_bundle,
 )
 from app.modules.instance import INSTANCE_FILES, parse_mapping
@@ -48,6 +49,7 @@ from app.modules.validator import (
     validate_compiled,
     validate_with_adapter,
 )
+from app.modules.validator.report import HardViolation, empty_report
 
 
 def _write_instance(source_files: dict, directory: str) -> None:
@@ -59,21 +61,39 @@ def _write_instance(source_files: dict, directory: str) -> None:
 def _validate(
     run: PlanningRun, compiled, bundle: SubmissionBundle, scenario: str
 ) -> ValidatorReport:
-    """Validate via the configured official command, else the fallback oracle."""
+    """Validate the exported CSVs, not the in-memory solve.
+
+    The bundle is written to disk and re-read before any check, so the report
+    describes the exact three files an operator downloads. The declared
+    scenario is checked against the requested one and a mismatch is a schema
+    violation, never a silent relabel.
+    """
 
     command = get_settings().validator_command
-    if command:
-        with (
-            tempfile.TemporaryDirectory() as instance_dir,
-            tempfile.TemporaryDirectory() as submission_dir,
-        ):
-            _write_instance(run.source_files, instance_dir)
-            write_bundle(submission_dir, bundle)
-            outcome = validate_with_adapter(
-                instance_dir, submission_dir, scenario, command=command
+    with tempfile.TemporaryDirectory() as submission_dir:
+        write_bundle(submission_dir, bundle)
+        exported = load_bundle(submission_dir)
+        if exported.scenario != scenario:
+            return empty_report(
+                scenario,
+                violations=(
+                    HardViolation(
+                        rule="schema",
+                        detail=(
+                            f"RESULTS.csv declares scenario {exported.scenario!r}, "
+                            f"but {scenario!r} was requested"
+                        ),
+                    ),
+                ),
             )
-        return outcome.report
-    return validate_compiled(compiled, bundle, scenario)
+        if command:
+            with tempfile.TemporaryDirectory() as instance_dir:
+                _write_instance(run.source_files, instance_dir)
+                outcome = validate_with_adapter(
+                    instance_dir, submission_dir, scenario, command=command
+                )
+            return outcome.report
+        return validate_compiled(compiled, exported, scenario)
 
 
 def _set_terminal(
