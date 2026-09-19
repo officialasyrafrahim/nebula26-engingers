@@ -1,0 +1,23 @@
+{
+  "run_id": "5099759b-1736-40fb-ac76-08e1747cd3d9",
+  "jobs": [
+    {
+      "scenario": "A",
+      "job_id": "64915a20-0a28-43d1-a758-ce0a48934d4c",
+      "possessions": 1,
+      "status": "PUBLISHED"
+    },
+    {
+      "scenario": "B",
+      "job_id": "f6035982-ebcc-48ce-82cc-6f15daf51a22",
+      "possessions": 1,
+      "status": "PUBLISHED"
+    },
+    {
+      "scenario": "C",
+      "job_id": "df2ac62c-da3f-4a2a-97bb-392cfda06468",
+      "possessions": 1,
+      "status": "PUBLISHED"
+    }
+  ]
+}

@@ -28,6 +28,8 @@ frontend/dist/
 # Distributable archives (may embed .venv, node_modules and deploy/.env)
 *.zip
 RAO-main.zip
+# Small checked-in demo outputs for the possession calendar walkthrough.
+!examples/calendar-demo/*.zip
 
 # Official validator drop-in (not shipped); keep the README.
 deploy/validator/*

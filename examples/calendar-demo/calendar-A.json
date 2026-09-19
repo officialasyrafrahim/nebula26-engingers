@@ -1,0 +1,157 @@
+{
+  "job_id": "64915a20-0a28-43d1-a758-ce0a48934d4c",
+  "run_id": "5099759b-1736-40fb-ac76-08e1747cd3d9",
+  "scenario": "A",
+  "schedule_version": "ea375269-8208-52b4-8c1e-cdb5a7adacdb",
+  "status": "PUBLISHED",
+  "horizon_start": "2027-01-04",
+  "validator_authority": "fallback",
+  "scores": {
+    "scenario": "A",
+    "overrun_days_total": 0,
+    "contracts_overrunning": 0,
+    "earliness_days_total": 150,
+    "excess_access_nights_total": 0,
+    "eclo_nights_total": 0,
+    "priority_overrun": {
+      "1": 0,
+      "2": 0,
+      "3": 0
+    },
+    "priority_weighted_score": 0.0,
+    "objective_score": 0.0,
+    "formula_version": "ps1-2.5"
+  },
+  "events": [
+    {
+      "possession_id": "77d24954-13dd-5125-9739-3ef9a0f7ab4c",
+      "job_id": "64915a20-0a28-43d1-a758-ce0a48934d4c",
+      "scenario": "A",
+      "schedule_version": "ea375269-8208-52b4-8c1e-cdb5a7adacdb",
+      "week": 1,
+      "physical_night": 7,
+      "location_ids": [
+        "PLAT:ALP:S01:EB",
+        "PLAT:ALP:S02:EB",
+        "SEC:ALP:S01_S02:EB"
+      ],
+      "activity_ids": [
+        "A1",
+        "A2",
+        "A3"
+      ],
+      "contract_numbers": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "co_share_group": "b1",
+      "access_type": [
+        "PC",
+        "C",
+        "C"
+      ],
+      "nature_of_works": [
+        "Non-live (Others)"
+      ],
+      "eclo": false,
+      "local_access_nights": {
+        "A1": 1,
+        "A2": 1,
+        "A3": 1
+      },
+      "status": "PUBLISHED",
+      "validator_status": "PASSED",
+      "evidence": [
+        {
+          "activity_id": "A1",
+          "reason_codes": [
+            "CO_SHARE_PACKED",
+            "PLANNED_START",
+            "POSSESSION_MIX",
+            "WORKFRONT"
+          ],
+          "summary": "A1 first access week 1; planned start week 1; bounded by planned start; packed under possession-mix rules; packed into a co-shared possession; used the contract workfront limit.",
+          "evidence": {
+            "first_week": 1,
+            "planned_start_week": 1,
+            "predecessor_activity_id": null,
+            "predecessor_last_week": null,
+            "horizon_weeks": 4,
+            "horizon_extended": false,
+            "access_type": "PC",
+            "co_share_group": "b1",
+            "co_share_partners": [
+              "A1",
+              "A2",
+              "A3"
+            ],
+            "co_share_size": 3,
+            "mix_groups": [
+              "b1"
+            ]
+          }
+        },
+        {
+          "activity_id": "A2",
+          "reason_codes": [
+            "CO_SHARE_PACKED",
+            "PLANNED_START",
+            "POSSESSION_MIX",
+            "WORKFRONT"
+          ],
+          "summary": "A2 first access week 1; planned start week 1; bounded by planned start; packed under possession-mix rules; packed into a co-shared possession; used the contract workfront limit.",
+          "evidence": {
+            "first_week": 1,
+            "planned_start_week": 1,
+            "predecessor_activity_id": null,
+            "predecessor_last_week": null,
+            "horizon_weeks": 4,
+            "horizon_extended": false,
+            "access_type": "C",
+            "co_share_group": "b1",
+            "co_share_partners": [
+              "A1",
+              "A2",
+              "A3"
+            ],
+            "co_share_size": 3,
+            "mix_groups": [
+              "b1"
+            ]
+          }
+        },
+        {
+          "activity_id": "A3",
+          "reason_codes": [
+            "CO_SHARE_PACKED",
+            "PLANNED_START",
+            "POSSESSION_MIX",
+            "WORKFRONT"
+          ],
+          "summary": "A3 first access week 1; planned start week 1; bounded by planned start; packed under possession-mix rules; packed into a co-shared possession; used the contract workfront limit.",
+          "evidence": {
+            "first_week": 1,
+            "planned_start_week": 1,
+            "predecessor_activity_id": null,
+            "predecessor_last_week": null,
+            "horizon_weeks": 4,
+            "horizon_extended": false,
+            "access_type": "C",
+            "co_share_group": "b1",
+            "co_share_partners": [
+              "A1",
+              "A2",
+              "A3"
+            ],
+            "co_share_size": 3,
+            "mix_groups": [
+              "b1"
+            ]
+          }
+        }
+      ],
+      "date": "2027-01-10"
+    }
+  ]
+}
