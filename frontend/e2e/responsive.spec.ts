@@ -18,6 +18,7 @@ const STAGES = [
   "Optimise",
   "Validate",
   "Explain",
+  "Calendar",
   "Export",
 ] as const;
 

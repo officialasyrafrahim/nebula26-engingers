@@ -530,6 +530,43 @@ export interface ScheduleQueryResponse {
 
 export type HealthStatus = Record<string, unknown>;
 
+// ------------------------------------------------------ possession calendar
+// Mirrors backend/app/modules/calendar/service.py. A calendar is a projection
+// of an assured persisted job. `date` is null until the version is published.
+
+export interface CalendarPossession {
+  possession_id: string;
+  job_id: string;
+  scenario: string;
+  schedule_version: string;
+  week: number;
+  physical_night: number;
+  location_ids: string[];
+  activity_ids: string[];
+  contract_numbers: string[];
+  co_share_group: string;
+  access_type: string[];
+  nature_of_works: string[];
+  eclo: boolean;
+  local_access_nights: Record<string, number>;
+  status: string;
+  validator_status: string;
+  evidence: ScheduleExplanation[];
+  date: string | null;
+}
+
+export interface PossessionCalendar {
+  job_id: string;
+  run_id: string;
+  scenario: string;
+  schedule_version: string;
+  status: string;
+  horizon_start: string;
+  validator_authority: string;
+  scores: Record<string, number>;
+  events: CalendarPossession[];
+}
+
 // --------------------------------------------------------- LTA DataMall context
 // Advisory-only contracts mirroring backend/app/modules/datamall/schemas.py.
 // The DataMall account key is never part of any payload.

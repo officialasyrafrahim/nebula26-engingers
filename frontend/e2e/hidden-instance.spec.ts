@@ -8,9 +8,9 @@ import {
 } from "./support/harness";
 
 // AT-15: a judge uploads an unseen eight-CSV instance and drives Ingest ->
-// Inspect -> Optimise -> Validate -> Explain -> Export entirely in the browser.
-// The solver, database and worker are replaced by route mocks, so this proves
-// the browser workflow and the export gate, not the solver itself.
+// Inspect -> Optimise -> Validate -> Explain -> Calendar -> Export entirely in
+// the browser. The solver, database and worker are replaced by route mocks, so
+// this proves the browser workflow and the export gate, not the solver itself.
 test.describe("AT-15 hidden-instance judge workflow", () => {
   test("uploads, validates and exports a held-out instance without a real solver", async ({
     page,
@@ -35,7 +35,12 @@ test.describe("AT-15 hidden-instance judge workflow", () => {
       page.getByRole("heading", { name: "Activity explanations" }),
     ).toBeVisible();
 
-    // Stage 6 · Export is gated open by the validator and downloads a zip.
+    // Stage 6 · Calendar projects the assured possession; publication stays
+    // locked until dates are confirmed, so the panel only reads.
+    await page.getByRole("tab", { name: /Calendar/ }).click();
+    await expect(page.locator("#workflow-panel-calendar")).toBeVisible();
+
+    // Stage 7 · Export is gated open by the validator and downloads a zip.
     const download = await exportScenarioA(page);
     expect(download.suggestedFilename()).toBe("scenario-A.zip");
     await expect(page.getByText("Downloaded scenario-A.zip")).toBeVisible();

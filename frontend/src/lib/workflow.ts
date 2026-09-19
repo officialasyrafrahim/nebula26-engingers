@@ -30,8 +30,14 @@ export const WORKFLOW_STAGES = [
     description: "Schedule evidence",
   },
   {
-    id: "export",
+    id: "calendar",
     number: "06",
+    label: "Calendar",
+    description: "Physical possessions",
+  },
+  {
+    id: "export",
+    number: "07",
     label: "Export",
     description: "Submission bundle",
   },
@@ -61,6 +67,7 @@ export function isWorkflowStageAvailable(
     case "validate":
       return readiness.hasJob;
     case "explain":
+    case "calendar":
     case "export":
       return readiness.hasResults;
   }

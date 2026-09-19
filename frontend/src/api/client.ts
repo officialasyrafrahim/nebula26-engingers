@@ -12,6 +12,7 @@ import type {
   HealthStatus,
   NetworkResponse,
   PlanningRun,
+  PossessionCalendar,
   ReplanRead,
   ReplanRequest,
   SandboxRead,
@@ -262,6 +263,35 @@ export function downloadBlob(blob: Blob, filename: string): void {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+// ------------------------------------------------------ possession calendar
+// The calendar is a projection of an already-assured persisted job, never a new
+// solve. Publishing binds one operating date per week:physical_night slot.
+
+export function getCalendar(
+  run: string,
+  job: string,
+): Promise<PossessionCalendar> {
+  return request<PossessionCalendar>(`/runs/${run}/jobs/${job}/calendar`);
+}
+
+export function publishCalendar(
+  run: string,
+  job: string,
+  dates: Record<string, string>,
+): Promise<PossessionCalendar> {
+  return request<PossessionCalendar>(`/runs/${run}/jobs/${job}/calendar/publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date_bindings: dates }),
+  });
+}
+
+export async function downloadCalendar(run: string, job: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/runs/${run}/jobs/${job}/calendar/ics`);
+  if (!response.ok) throw await toApiError(response);
+  downloadBlob(await response.blob(), `rao-${job}.ics`);
 }
 
 // ------------------------------------------------------- LTA DataMall context

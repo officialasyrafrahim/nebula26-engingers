@@ -10,10 +10,10 @@ import {
 } from "../src/lib/workflow.ts";
 
 describe("workflow stage availability", () => {
-  it("keeps the six stages in judge workflow order", () => {
+  it("keeps the seven stages in judge workflow order", () => {
     assert.deepEqual(
       WORKFLOW_STAGES.map((stage) => stage.id),
-      ["ingest", "inspect", "optimise", "validate", "explain", "export"],
+      ["ingest", "inspect", "optimise", "validate", "explain", "calendar", "export"],
     );
   });
 

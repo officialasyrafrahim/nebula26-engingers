@@ -25,6 +25,7 @@ import JobMonitor from "./components/JobMonitor";
 import DatamallPanel from "./components/DatamallPanel";
 import NetworkSummary from "./components/NetworkSummary";
 import Panel from "./components/Panel";
+import PossessionCalendar from "./components/PossessionCalendar";
 import ResultDashboard from "./components/ResultDashboard";
 import RunLibrary from "./components/RunLibrary";
 import RunSummary from "./components/RunSummary";
@@ -632,6 +633,23 @@ export default function App() {
       />
 
       <main className="workflow-content">
+        <section
+          id="workflow-panel-calendar"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-calendar"
+          tabIndex={-1}
+          hidden={activeStage !== "calendar"}
+          className="workflow-panel"
+        >
+          {resultReady && scheduleData && selectedRun && activeStage === "calendar" ? (
+            <PossessionCalendar
+              key={scheduleData.job_id}
+              runId={selectedRun.id}
+              jobId={scheduleData.job_id}
+            />
+          ) : null}
+        </section>
+
         <section
           id="workflow-panel-ingest"
           role="tabpanel"

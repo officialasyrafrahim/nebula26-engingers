@@ -6,7 +6,7 @@ import {
   uploadHiddenInstance,
 } from "./support/harness";
 
-const LOCKED_STAGES = ["Optimise", "Validate", "Explain", "Export"] as const;
+const LOCKED_STAGES = ["Optimise", "Validate", "Explain", "Calendar", "Export"] as const;
 
 test.describe("workflow tab keyboard navigation", () => {
   test("marks future stages locked and skips them with arrows, Home and End", async ({
@@ -45,7 +45,7 @@ test.describe("workflow tab keyboard navigation", () => {
     await expect(page.getByRole("tab", { name: /Inspect/ })).toBeFocused();
   });
 
-  test("traverses all six stages and shows each stage panel", async ({ page }) => {
+  test("traverses all seven stages and shows each stage panel", async ({ page }) => {
     await installApiMocks(page);
     await driveToValidatedResult(page);
 
@@ -57,6 +57,7 @@ test.describe("workflow tab keyboard navigation", () => {
       ["ArrowRight", "Optimise"],
       ["ArrowRight", "Validate"],
       ["ArrowRight", "Explain"],
+      ["ArrowRight", "Calendar"],
       ["ArrowRight", "Export"],
       ["ArrowRight", "Ingest"],
     ];
