@@ -7,6 +7,8 @@
 // server-provided filename.
 
 import type {
+  DatamallNetworkContext,
+  DatamallStatusResponse,
   HealthStatus,
   NetworkResponse,
   PlanningRun,
@@ -207,4 +209,19 @@ export function downloadBlob(blob: Blob, filename: string): void {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+// ------------------------------------------------------- LTA DataMall context
+// Advisory only. These calls never change solver state and are safe to fail.
+
+export function getDatamallContext(
+  networkKey: string,
+): Promise<DatamallNetworkContext> {
+  return request<DatamallNetworkContext>(
+    `/context/datamall/context?network=${encodeURIComponent(networkKey)}`,
+  );
+}
+
+export function getDatamallStatus(): Promise<DatamallStatusResponse> {
+  return request<DatamallStatusResponse>("/context/datamall/status");
 }

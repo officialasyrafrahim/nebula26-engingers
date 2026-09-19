@@ -22,6 +22,7 @@ import {
   type ValidatorReportRead,
 } from "./api/types";
 import JobMonitor from "./components/JobMonitor";
+import DatamallPanel from "./components/DatamallPanel";
 import NetworkSummary from "./components/NetworkSummary";
 import Panel from "./components/Panel";
 import ResultDashboard from "./components/ResultDashboard";
@@ -683,6 +684,7 @@ export default function App() {
                   )}
                 </Panel>
               )}
+              {network ? <DatamallPanel network={network} /> : null}
             </div>
           ) : null}
         </section>

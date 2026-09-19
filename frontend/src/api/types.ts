@@ -273,3 +273,115 @@ export interface ValidatorReportRead {
 }
 
 export type HealthStatus = Record<string, unknown>;
+
+// --------------------------------------------------------- LTA DataMall context
+// Advisory-only contracts mirroring backend/app/modules/datamall/schemas.py.
+// The DataMall account key is never part of any payload.
+
+export type DatamallState = "ok" | "empty" | "unconfigured" | "error";
+
+export interface DatamallSourceStatus {
+  dataset: string;
+  source: string;
+  source_url: string;
+  interval: string;
+  state: DatamallState;
+  available: boolean;
+  configured: boolean;
+  retrieved_at: string | null;
+  cached: boolean;
+  http_status: number | null;
+  reason: string | null;
+}
+
+export interface DatamallAdvisory {
+  advisory: boolean;
+  label: string;
+  disclaimer: string;
+  measurement_note: string;
+}
+
+export interface PassengerVolumeRecord {
+  station_code: string;
+  station_name: string | null;
+  solver_line: string | null;
+  solver_station: string | null;
+  datamall_line: string | null;
+  tap_in_weekday: number | null;
+  tap_out_weekday: number | null;
+  tap_in_weekend: number | null;
+  tap_out_weekend: number | null;
+  total_weekday: number | null;
+  total_weekend: number | null;
+}
+
+export interface OdVolumeRecord {
+  origin_code: string;
+  origin_name: string | null;
+  destination_code: string;
+  destination_name: string | null;
+  weekday_trips: number;
+  weekend_trips: number;
+}
+
+export interface CrowdDensityRecord {
+  station_code: string;
+  station_name: string | null;
+  solver_line: string | null;
+  solver_station: string | null;
+  datamall_line: string | null;
+  crowd_level: string;
+  interval_start: string | null;
+  interval_end: string | null;
+}
+
+export interface TrainAlertRecord {
+  line: string | null;
+  direction: string | null;
+  stations: string[];
+  free_public_bus: string[];
+  free_mrt_shuttle: string[];
+  message: string | null;
+  created_at: string | null;
+}
+
+export interface MappingStationRead {
+  solver_line: string;
+  solver_station: string;
+  name: string;
+  code: string;
+  datamall_line: string;
+}
+
+export interface MappingNetworkRead {
+  key: string;
+  label: string;
+  solver_lines: string[];
+  crowd_lines: string[];
+  alert_lines: string[];
+  stations: MappingStationRead[];
+}
+
+export interface DatamallNetworkContext {
+  network: string;
+  supported: boolean;
+  advisory: DatamallAdvisory;
+  generated_at: string;
+  mapping: MappingNetworkRead | null;
+  reason: string | null;
+  sources: DatamallSourceStatus[];
+  passenger_volume: PassengerVolumeRecord[];
+  od_volume: OdVolumeRecord[];
+  crowd_density: CrowdDensityRecord[];
+  crowd_forecast: CrowdDensityRecord[];
+  alerts: TrainAlertRecord[];
+  alerts_status: number | null;
+}
+
+export interface DatamallStatusResponse {
+  configured: boolean;
+  enabled: boolean;
+  state: DatamallState;
+  reason: string | null;
+  datasets: DatamallSourceStatus[];
+}
