@@ -6,7 +6,7 @@ PY=$(VENV)/bin/python
 COMPOSE=docker compose -f deploy/docker-compose.yml
 INSTANCE ?= data/public-instance
 
-.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-test web-build web-e2e features features-validate inspect-instance labels-dry-run labels-sync
+.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-test web-build web-e2e features features-validate inspect-instance labels-dry-run labels-sync rao-start rao-stop rao-status rao-tunnel
 
 venv:
 	python3 -m venv $(VENV)
@@ -55,6 +55,20 @@ up:
 
 down:
 	$(COMPOSE) down
+
+# Bring up containers plus the tunnel and sleep helpers, all in tmux. Idempotent.
+rao-start:
+	bash scripts/rao-start.sh
+
+rao-stop:
+	bash scripts/rao-stop.sh
+
+rao-status:
+	bash scripts/rao-status.sh
+
+# Run only the Cloudflare tunnel connector in the foreground.
+rao-tunnel:
+	bash scripts/rao-tunnel.sh
 
 logs:
 	$(COMPOSE) logs -f --tail=100
