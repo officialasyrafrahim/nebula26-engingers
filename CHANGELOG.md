@@ -4,6 +4,9 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Add fragility and what-if sandboxing plus a deterministic schedule query backend.
+- Add the disruption replanning panel to the validated result view.
+- Add a Playwright browser and responsive acceptance suite covering AT-15.
 - Add optional LTA DataMall advisory context, off by default with no egress without a key.
 - Add disruption impact assessment and minimal-churn replanning backend.
 - Build a witness-gated greedy incumbent so tight budgets still return a safe complete schedule.
