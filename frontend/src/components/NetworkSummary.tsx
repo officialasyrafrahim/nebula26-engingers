@@ -1,32 +1,45 @@
 import type { Activity, NetworkResponse } from "../api/types";
+import {
+  lineDisplay,
+  locationDisplay,
+  MAPPING_NOTE,
+  sectorDisplay,
+  stationDisplay,
+} from "../lib/networkNames";
 import Panel from "./Panel";
 
 interface NetworkSummaryProps {
   network: NetworkResponse;
 }
 
-function shortLocation(locationId: string): string {
+// Presentation only. The raw location id stays the title and the source for the
+// platform/sector styling; the visible text may be a real station name.
+function RouteStop({ locationId }: { locationId: string }) {
+  const display = locationDisplay(locationId);
   const parts = locationId.split(":");
-  if (parts[0] === "PLAT" && parts.length >= 4) {
-    return `${parts[2]}·${parts[3]}`;
-  }
-  if (parts[0] === "SEC" && parts.length >= 4) {
-    return `${parts[2]}·${parts[3]}`;
-  }
-  return locationId;
+  const bound = parts.length >= 4 ? parts[parts.length - 1] : null;
+  return (
+    <li
+      className={`track__stop${
+        locationId.startsWith("PLAT:") ? " track__stop--platform" : ""
+      }${display.mapped ? "" : " track__stop--unmapped"}`}
+      title={
+        display.mapped
+          ? `${display.text} · ${locationId}`
+          : `${locationId} · no mapping available`
+      }
+    >
+      {display.text}
+      {bound ? <span className="track__stop-bound"> · {bound}</span> : null}
+    </li>
+  );
 }
 
 function RouteTrack({ locationIds }: { locationIds: string[] }) {
   return (
     <ol className="track" aria-label="Expanded route locations">
       {locationIds.map((locationId, index) => (
-        <li
-          key={`${locationId}-${index}`}
-          className={`track__stop${locationId.startsWith("PLAT:") ? " track__stop--platform" : ""}`}
-          title={locationId}
-        >
-          {shortLocation(locationId)}
-        </li>
+        <RouteStop key={`${locationId}-${index}`} locationId={locationId} />
       ))}
     </ol>
   );
@@ -58,6 +71,19 @@ export default function NetworkSummary({ network }: NetworkSummaryProps) {
     0,
   );
   const longestRoute = routeEntries[0]?.locations.length ?? 0;
+
+  // Every identifier with no real-network entry. Hidden instances keep the raw
+  // solver ids, and the panel says so instead of inventing a name.
+  const unmappedNames = [
+    ...new Set([
+      ...network.stations
+        .filter((station) => !stationDisplay(station.line_code, station.station_id).mapped)
+        .map((station) => station.station_id),
+      ...network.sectors
+        .filter((sector) => !sectorDisplay(sector.line_code, sector.sector_id).mapped)
+        .map((sector) => sector.sector_id),
+    ]),
+  ].sort();
 
   return (
     <Panel
@@ -119,12 +145,23 @@ export default function NetworkSummary({ network }: NetworkSummaryProps) {
               const sectors = network.sectors.filter(
                 (sector) => sector.line_code === line.line_code,
               ).length;
+              const info = lineDisplay(line.line_code);
               return (
                 <li key={line.line_code} className="linelist__item">
-                  <span className="linelist__code">{line.line_code}</span>
-                  <span className="linelist__name">{line.line_name}</span>
+                  <span
+                    className="linelist__code"
+                    title={
+                      info.mapped
+                        ? `${info.text} · solver line ${line.line_code}`
+                        : line.line_code
+                    }
+                  >
+                    {info.text}
+                  </span>
+                  <span className="linelist__name">{info.name}</span>
                   <span className="linelist__meta">
                     {stations} stations · {sectors} sectors
+                    {info.mapped ? ` · solver ${line.line_code}` : ""}
                   </span>
                 </li>
               );
@@ -161,9 +198,12 @@ export default function NetworkSummary({ network }: NetworkSummaryProps) {
                     <span className="routelist__contract">
                       {activity.contract_number}
                     </span>
-                    <span className="routelist__span">
-                      {shortLocation(activity.start_location_id)} →{" "}
-                      {shortLocation(activity.end_location_id)}
+                    <span
+                      className="routelist__span"
+                      title={`${activity.start_location_id} → ${activity.end_location_id}`}
+                    >
+                      {locationDisplay(activity.start_location_id).text} →{" "}
+                      {locationDisplay(activity.end_location_id).text}
                     </span>
                   </div>
                   {locations.length > 0 ? (
@@ -177,6 +217,16 @@ export default function NetworkSummary({ network }: NetworkSummaryProps) {
           </div>
         </div>
       </div>
+
+      <p className="network-names__note">
+        {unmappedNames.length > 0 ? (
+          <>
+            No real-network mapping is available for {unmappedNames.join(", ")}.
+            Those labels keep the raw solver identifier.{" "}
+          </>
+        ) : null}
+        {MAPPING_NOTE}
+      </p>
     </Panel>
   );
 }

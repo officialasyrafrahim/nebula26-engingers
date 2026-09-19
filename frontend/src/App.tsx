@@ -29,9 +29,11 @@ import RunLibrary from "./components/RunLibrary";
 import RunSummary from "./components/RunSummary";
 import ScenarioLauncher from "./components/ScenarioLauncher";
 import SignalLamp, { type LampTone } from "./components/SignalLamp";
+import TonightPanel from "./components/TonightPanel";
 import UploadPanel from "./components/UploadPanel";
 import WorkflowTabs from "./components/WorkflowTabs";
 import { useJobPolling } from "./hooks/useJobPolling";
+import type { ScenarioCompareEntry } from "./lib/compare";
 import type { ActivitySelection } from "./lib/schematic";
 import {
   stageAfterResultLoad,
@@ -89,6 +91,11 @@ export default function App() {
   const [loadedJobId, setLoadedJobId] = useState<string | null>(null);
   const [selection, setSelection] = useState<ActivitySelection | null>(null);
 
+  const [tonightMode, setTonightMode] = useState(false);
+  const [compareEntries, setCompareEntries] = useState<ScenarioCompareEntry[]>([]);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+
   const [actionError, setActionError] = useState<string | null>(null);
 
   const selectedRunId = selectedRun?.id ?? null;
@@ -133,6 +140,18 @@ export default function App() {
   const jobs = useMemo(
     () => (selectedRunId ? (jobsByRun[selectedRunId] ?? []) : []),
     [jobsByRun, selectedRunId],
+  );
+
+  // Stable signature of the completed jobs so the comparison report fetch
+  // reruns only when a scenario result actually appears or changes.
+  const completedJobKey = useMemo(
+    () =>
+      jobs
+        .filter((job) => job.state === "COMPLETED")
+        .map((job) => `${job.scenario}:${job.id}`)
+        .sort()
+        .join("|"),
+    [jobs],
   );
 
   const refreshHealth = useCallback(async () => {
@@ -432,6 +451,75 @@ export default function App() {
     }
   }, [activateStage, activeStage, resultKey]);
 
+  // Tonight mode is only meaningful with a loaded result. Leaving a run or a
+  // failed reload drops back to the staged workflow instead of a stale view.
+  useEffect(() => {
+    if (!resultReady) setTonightMode(false);
+  }, [resultReady]);
+
+  // Gather one persisted validator report per scenario for the same run. The
+  // active scenario reuses the report already on screen; other scenarios use
+  // their latest completed job. No schedule is recomputed and no data is
+  // invented when a scenario has not run.
+  useEffect(() => {
+    if (!resultReady || !selectedRun || !scheduleData || !reportData) {
+      setCompareEntries([]);
+      setCompareError(null);
+      setCompareLoading(false);
+      return;
+    }
+    const runId = selectedRun.id;
+    const activeScenario = scheduleData.scenario;
+    const activeJobId = scheduleData.job_id;
+    const activeReport = reportData.report;
+
+    const latestByScenario = new Map<Scenario, ScenarioJob>();
+    for (const job of jobs) {
+      if (job.state !== "COMPLETED") continue;
+      const existing = latestByScenario.get(job.scenario);
+      if (
+        !existing ||
+        new Date(job.submitted_at).getTime() >
+          new Date(existing.submitted_at).getTime()
+      ) {
+        latestByScenario.set(job.scenario, job);
+      }
+    }
+
+    let cancelled = false;
+    setCompareLoading(true);
+    setCompareError(null);
+    const scenarios: Scenario[] = ["A", "B", "C"];
+    void Promise.all(
+      scenarios.map(async (scenario): Promise<ScenarioCompareEntry | null> => {
+        if (scenario === activeScenario) {
+          return { scenario, jobId: activeJobId, report: activeReport };
+        }
+        const job = latestByScenario.get(scenario);
+        if (!job) return null;
+        try {
+          const read = await getReport(runId, job.id);
+          return { scenario, jobId: job.id, report: read.report };
+        } catch (caught) {
+          if (!cancelled) setCompareError(errorMessage(caught));
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setCompareEntries(
+        results.filter(
+          (entry): entry is ScenarioCompareEntry => entry != null,
+        ),
+      );
+      setCompareLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resultReady, selectedRun, scheduleData, reportData, completedJobKey]);
+
   const workflowReadiness = {
     hasRun: selectedRun != null,
     hasNetwork: network != null,
@@ -492,6 +580,22 @@ export default function App() {
             </span>
           ) : null}
         </div>
+        <div className="masthead__mode">
+          <button
+            type="button"
+            className={`btn btn--tiny${tonightMode ? " btn--primary" : ""}`}
+            aria-pressed={tonightMode}
+            disabled={!resultReady}
+            title={
+              resultReady
+                ? "Toggle the tonight controller view for shift handover"
+                : "Load a validated result to open tonight mode"
+            }
+            onClick={() => setTonightMode((value) => !value)}
+          >
+            {tonightMode ? "Exit tonight" : "Tonight mode"}
+          </button>
+        </div>
       </header>
 
       {actionError ? (
@@ -508,6 +612,18 @@ export default function App() {
         </div>
       ) : null}
 
+      {tonightMode && resultReady && scheduleData && selectedRun && network ? (
+        <TonightPanel
+          network={network}
+          schedule={scheduleData}
+          scenario={scheduleData.scenario}
+          selection={selection}
+          onSelect={handleSelect}
+          onClearSelection={handleClearSelection}
+          onExit={() => setTonightMode(false)}
+        />
+      ) : (
+      <>
       <WorkflowTabs
         activeStage={activeStage}
         readiness={workflowReadiness}
@@ -646,6 +762,10 @@ export default function App() {
               selection={selection}
               onSelect={handleSelect}
               onClearSelection={handleClearSelection}
+              compareEntries={compareEntries}
+              compareLoading={compareLoading}
+              compareError={compareError}
+              onLoadOthers={() => activateStage("optimise", true)}
             />
           ) : null}
         </section>
@@ -670,6 +790,10 @@ export default function App() {
               selection={selection}
               onSelect={handleSelect}
               onClearSelection={handleClearSelection}
+              compareEntries={compareEntries}
+              compareLoading={compareLoading}
+              compareError={compareError}
+              onLoadOthers={() => activateStage("optimise", true)}
             />
           ) : null}
         </section>
@@ -694,10 +818,16 @@ export default function App() {
               selection={selection}
               onSelect={handleSelect}
               onClearSelection={handleClearSelection}
+              compareEntries={compareEntries}
+              compareLoading={compareLoading}
+              compareError={compareError}
+              onLoadOthers={() => activateStage("optimise", true)}
             />
           ) : null}
         </section>
       </main>
+      </>
+      )}
 
       <footer className="footer">
         <span>

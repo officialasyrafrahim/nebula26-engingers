@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  displacementReading,
   evidenceIsNeutral,
   isConfirmingEvidence,
   reasonEvidenceKeys,
@@ -93,5 +94,81 @@ describe("evidenceIsNeutral", () => {
 
   it("does not mark unrelated facts as neutral", () => {
     assert.equal(evidenceIsNeutral("horizon_extended", false, keys), false);
+  });
+});
+
+describe("displacementReading", () => {
+  it("says so when no displacement evidence is persisted", () => {
+    const reading = displacementReading({ first_week: 3 });
+    assert.equal(reading.present, false);
+    assert.equal(reading.displaced, false);
+    assert.match(reading.note, /No displacement evidence is persisted/);
+  });
+
+  it("names a confirmed binding constraint when the evidence is complete", () => {
+    const reading = displacementReading({
+      displaced: true,
+      planned_earliest_week: 1,
+      actual_first_week: 3,
+      rejected_weeks: [1, 2],
+      binding_week: 1,
+      binding_constraints: ["CAPACITY"],
+      binding_details: {
+        CAPACITY: {
+          week: 1,
+          night: 4,
+          location_id: "SEC:ALP:S01_S02:EB",
+          used: 1,
+          capacity: 1,
+        },
+      },
+    });
+    assert.equal(reading.present, true);
+    assert.equal(reading.displaced, true);
+    assert.deepEqual(reading.supportedConstraints, ["CAPACITY"]);
+    assert.deepEqual(reading.unsupportedConstraints, []);
+    assert.equal(reading.trustworthy, true);
+    assert.match(reading.note, /earliest admissible week was blocked/);
+  });
+
+  it("refuses to name a constraint whose detail does not confirm it", () => {
+    const reading = displacementReading({
+      displaced: true,
+      planned_earliest_week: 1,
+      actual_first_week: 3,
+      rejected_weeks: [1, 2],
+      binding_week: 1,
+      binding_constraints: ["CAPACITY"],
+      binding_details: {},
+    });
+    assert.deepEqual(reading.supportedConstraints, []);
+    assert.deepEqual(reading.unsupportedConstraints, ["CAPACITY"]);
+    assert.equal(reading.trustworthy, false);
+    assert.match(reading.note, /incomplete or inconsistent/);
+  });
+
+  it("distrusts a binding week that was never rejected", () => {
+    const reading = displacementReading({
+      displaced: true,
+      planned_earliest_week: 1,
+      actual_first_week: 3,
+      rejected_weeks: [2],
+      binding_week: 1,
+      binding_constraints: ["WEEKLY_CAP"],
+      binding_details: { WEEKLY_CAP: { week: 1, used: 2, limit: 2 } },
+    });
+    assert.equal(reading.trustworthy, false);
+  });
+
+  it("reports an undisplaced placement without claiming a cause", () => {
+    const reading = displacementReading({
+      displaced: false,
+      planned_earliest_week: 3,
+      actual_first_week: 3,
+    });
+    assert.equal(reading.present, true);
+    assert.equal(reading.displaced, false);
+    assert.equal(reading.trustworthy, false);
+    assert.match(reading.note, /No earlier week was rejected/);
   });
 });

@@ -1,5 +1,8 @@
 import type { ScheduleExplanation } from "../api/types";
 import {
+  BINDING_LABELS,
+  DISPLACEMENT_EVIDENCE_KEYS,
+  displacementReading,
   evidenceIsNeutral,
   reasonEvidenceKeys,
   reasonSupport,
@@ -50,7 +53,12 @@ const EVIDENCE_LABELS: Record<string, string> = {
   capacity_week: "Capacity week",
   capacity_used: "Capacity used",
   capacity_limit: "Capacity limit",
+  possession_conflicts: "Possession conflicts",
 };
+
+const DISPLACEMENT_KEY_SET: ReadonlySet<string> = new Set(
+  DISPLACEMENT_EVIDENCE_KEYS,
+);
 
 function formatEvidenceValue(value: unknown): string {
   if (value == null) return "—";
@@ -90,9 +98,12 @@ export default function ExplanationsPanel({
           {ordered.map((entry) => {
             const reasonCodes = entry.reason_codes ?? [];
             const evidenceMap = entry.evidence ?? {};
-            const evidence = Object.entries(evidenceMap).sort(
-              ([left], [right]) => left.localeCompare(right),
-            );
+            const displacement = displacementReading(evidenceMap);
+            // Displacement facts get their own truth-checked block below, so the
+            // generic list is only the remaining structural evidence.
+            const evidence = Object.entries(evidenceMap)
+              .filter(([key]) => !DISPLACEMENT_KEY_SET.has(key))
+              .sort(([left], [right]) => left.localeCompare(right));
             // A reason is only supported when one of its facts actually
             // confirms it. A false boolean or a zero count is recorded but does
             // not count as proof, so it can never sit under a claimed cause as
@@ -149,6 +160,77 @@ export default function ExplanationsPanel({
                     values below are shown for completeness only.
                   </p>
                 ) : null}
+
+                <div className="explanations__displacement">
+                  <p
+                    className={
+                      displacement.present
+                        ? "explanations__displacement-note"
+                        : "explanations__displacement-none"
+                    }
+                  >
+                    {displacement.note}
+                  </p>
+                  {displacement.present && displacement.displaced ? (
+                    <>
+                      <dl className="explanations__evidence">
+                        {displacement.plannedEarliestWeek != null ? (
+                          <div className="explanations__fact">
+                            <dt>Planned earliest</dt>
+                            <dd>W{displacement.plannedEarliestWeek}</dd>
+                          </div>
+                        ) : null}
+                        {displacement.actualFirstWeek != null ? (
+                          <div className="explanations__fact">
+                            <dt>First access</dt>
+                            <dd>W{displacement.actualFirstWeek}</dd>
+                          </div>
+                        ) : null}
+                        {displacement.rejectedWeeks.length > 0 ? (
+                          <div className="explanations__fact">
+                            <dt>Rejected weeks</dt>
+                            <dd>
+                              {displacement.rejectedWeeks
+                                .map((value) => `W${value}`)
+                                .join(", ")}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {displacement.bindingWeek != null ? (
+                          <div className="explanations__fact">
+                            <dt>Binding week</dt>
+                            <dd>W{displacement.bindingWeek}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                      {displacement.supportedConstraints.length > 0 ? (
+                        <ul
+                          className="reasons"
+                          aria-label={`Binding constraints for ${entry.activity_id}`}
+                        >
+                          {displacement.supportedConstraints.map((code) => (
+                            <li key={code} className="reason">
+                              <code>{code}</code>
+                              <span>{BINDING_LABELS[code] ?? code}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {displacement.unsupportedConstraints.length > 0 ? (
+                        <p className="explanations__unsupported">
+                          No recorded detail confirms{" "}
+                          {displacement.unsupportedConstraints.join(", ")}, so the
+                          board does not name{" "}
+                          {displacement.unsupportedConstraints.length === 1
+                            ? "it"
+                            : "them"}{" "}
+                          as the cause.
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
+
                 {evidence.length > 0 ? (
                   <dl className="explanations__evidence">
                     {evidence.map(([key, value]) => {

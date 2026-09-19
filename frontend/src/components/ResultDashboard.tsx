@@ -3,6 +3,7 @@ import type {
   ScheduleResponse,
   ValidatorReport,
 } from "../api/types";
+import type { ScenarioCompareEntry } from "../lib/compare";
 import { capacityReadings, isAtCapacity, type ActivitySelection } from "../lib/schematic";
 import ActivityTimeline from "./ActivityTimeline";
 import AssurancePanel from "./AssurancePanel";
@@ -12,6 +13,7 @@ import EcloPanel from "./EcloPanel";
 import ExplanationsPanel from "./ExplanationsPanel";
 import HotspotsPanel from "./HotspotsPanel";
 import PossessionDrawer from "./PossessionDrawer";
+import ScenarioCompare from "./ScenarioCompare";
 import ScorePanel from "./ScorePanel";
 import TrackSchematic from "./TrackSchematic";
 import ValidatorGate from "./ValidatorGate";
@@ -28,6 +30,10 @@ interface ResultDashboardProps {
   selection: ActivitySelection | null;
   onSelect: (selection: ActivitySelection) => void;
   onClearSelection: () => void;
+  compareEntries?: ScenarioCompareEntry[];
+  compareLoading?: boolean;
+  compareError?: string | null;
+  onLoadOthers?: () => void;
 }
 
 export default function ResultDashboard({
@@ -41,6 +47,10 @@ export default function ResultDashboard({
   selection,
   onSelect,
   onClearSelection,
+  compareEntries = [],
+  compareLoading = false,
+  compareError = null,
+  onLoadOthers,
 }: ResultDashboardProps) {
   const selectedActivityId = selection?.activityId ?? null;
 
@@ -93,6 +103,14 @@ export default function ResultDashboard({
         results={schedule.results}
         contracts={network.contracts}
         scenario={scenario}
+      />
+
+      <ScenarioCompare
+        entries={compareEntries}
+        loading={compareLoading}
+        error={compareError}
+        activeScenario={schedule.scenario}
+        onLoadOthers={onLoadOthers}
       />
 
       <TrackSchematic

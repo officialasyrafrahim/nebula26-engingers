@@ -22,6 +22,12 @@ import {
   type SchematicNode,
   type SpanLayer,
 } from "../lib/schematic";
+import {
+  lineDisplay,
+  MAPPING_NOTE,
+  sectorDisplay,
+  stationDisplay,
+} from "../lib/networkNames";
 import Panel from "./Panel";
 import SignalLamp from "./SignalLamp";
 
@@ -59,6 +65,7 @@ function hueFor(value: string): number {
 
 function SchematicCell({
   node,
+  lineCode,
   groups,
   reading,
   layers,
@@ -72,6 +79,7 @@ function SchematicCell({
   onSelect,
 }: {
   node: SchematicNode;
+  lineCode: string;
   groups: CoShareGrouping[];
   reading: CapacityReading;
   layers: LayerState;
@@ -84,6 +92,16 @@ function SchematicCell({
   night: number | null;
   onSelect: (selection: ActivitySelection) => void;
 }) {
+  // The node's display label is a presentation choice only. Selection, route
+  // highlighting and capacity all keep using the raw locationId below.
+  const display =
+    node.kind === "station" && node.stationId
+      ? stationDisplay(lineCode, node.stationId)
+      : node.kind === "sector" && node.sectorId
+        ? sectorDisplay(lineCode, node.sectorId)
+        : { text: node.label, mapped: false };
+  const rawTitle =
+    display.text !== node.label ? `${display.text} · ${node.label}` : node.label;
   const possessed = groups.length > 0;
   const selected = groups.some((group) =>
     group.members.some((member) => member.activityId === selectedActivityId),
@@ -99,9 +117,10 @@ function SchematicCell({
   else if (routeHighlight) classes.push("schematic__cell--route");
   if (linked) classes.push("schematic__cell--linked");
   if (selected || linked) classes.push("schematic__cell--selected");
+  if (!display.mapped) classes.push("schematic__cell--unmapped");
 
   return (
-    <li className={classes.join(" ")} title={node.locationId}>
+    <li className={classes.join(" ")} title={`${rawTitle} · ${node.locationId}`}>
       {spansAvailable && layers.buffer && spanLayers.has("buffer") ? (
         <span className="schematic__mark schematic__mark--buffer" title="Safety buffer" />
       ) : null}
@@ -119,13 +138,13 @@ function SchematicCell({
         <button
           type="button"
           className="schematic__node-button"
-          title={`Select ${linkedActivityId} at ${node.label}`}
+          title={`Select ${linkedActivityId} at ${rawTitle}`}
           onClick={() => onSelect({ activityId: linkedActivityId, week, night })}
         >
-          {node.label}
+          {display.text}
         </button>
       ) : (
-        <span className="schematic__node-label">{node.label}</span>
+        <span className="schematic__node-label">{display.text}</span>
       )}
 
       {layers.capacity && reading.used > 0 ? (
@@ -266,6 +285,23 @@ export default function TrackSchematic({
 
   const nightSource = useMemo(() => nightSourceOf(schedule.access), [schedule.access]);
 
+  // Identifiers with no real-network entry. Hidden instances keep their raw
+  // solver ids, and the board says so rather than showing a made-up name.
+  const unmappedNames = useMemo(() => {
+    const ids = new Set<string>();
+    for (const station of network.stations ?? []) {
+      if (!stationDisplay(station.line_code, station.station_id).mapped) {
+        ids.add(station.station_id);
+      }
+    }
+    for (const sector of network.sectors ?? []) {
+      if (!sectorDisplay(sector.line_code, sector.sector_id).mapped) {
+        ids.add(sector.sector_id);
+      }
+    }
+    return [...ids].sort();
+  }, [network]);
+
   const readingFor = (node: SchematicNode): CapacityReading => {
     const used = weekGroups.get(node.locationId)?.size ?? 0;
     const capacity = locationCapacity(network, node.locationId);
@@ -375,12 +411,35 @@ export default function TrackSchematic({
         </p>
       ) : null}
 
+      {unmappedNames.length > 0 ? (
+        <p className="schematic__note">
+          No real-network mapping is available for {unmappedNames.join(", ")}. Those
+          nodes keep their raw solver identifiers. {MAPPING_NOTE}
+        </p>
+      ) : null}
+
       <div className="schematic__board">
-        {schematic.map((line) => (
+        {schematic.map((line) => {
+          const lineInfo = lineDisplay(line.lineCode);
+          return (
           <section key={line.lineCode} className="schematic__line">
             <header className="schematic__line-head">
-              <span className="schematic__line-code">{line.lineCode}</span>
-              <span className="schematic__line-name">{line.lineName}</span>
+              <span
+                className="schematic__line-code"
+                title={
+                  lineInfo.mapped
+                    ? `${lineInfo.text} · solver line ${line.lineCode}`
+                    : line.lineCode
+                }
+              >
+                {lineInfo.text}
+              </span>
+              <span className="schematic__line-name">
+                {lineInfo.mapped ? lineInfo.name : line.lineName}
+              </span>
+              {lineInfo.mapped ? (
+                <span className="schematic__line-raw">solver {line.lineCode}</span>
+              ) : null}
             </header>
             {line.bounds.map((bound) => (
               <div key={bound.bound} className="schematic__bound">
@@ -393,6 +452,7 @@ export default function TrackSchematic({
                     <SchematicCell
                       key={node.key}
                       node={node}
+                      lineCode={line.lineCode}
                       groups={groupsByLocation.get(node.locationId) ?? []}
                       reading={readingFor(node)}
                       layers={layers}
@@ -414,7 +474,8 @@ export default function TrackSchematic({
               </div>
             ))}
           </section>
-        ))}
+          );
+        })}
       </div>
 
       <div className="schematic__legend" aria-label="Overlay legend">

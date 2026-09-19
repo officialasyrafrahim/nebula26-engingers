@@ -21,6 +21,10 @@ export interface SchematicNode {
   key: string;
   kind: "station" | "sector";
   label: string;
+  // Raw solver identifiers carried alongside the label so the presentation
+  // mapping can translate them without any logic reading the display string.
+  stationId?: string;
+  sectorId?: string;
   locationId: string;
   seq: number;
   isInterchange: boolean;
@@ -155,6 +159,7 @@ export function buildSchematic(network: NetworkResponse): SchematicLine[] {
           key: `PLAT:${line.line_code}:${station.station_id}:${bound}`,
           kind: "station",
           label: station.station_id,
+          stationId: station.station_id,
           locationId: `PLAT:${line.line_code}:${station.station_id}:${bound}`,
           seq: station.seq,
           isInterchange: station.is_interchange,
@@ -174,6 +179,7 @@ export function buildSchematic(network: NetworkResponse): SchematicLine[] {
             key: `${sector.sector_id}:${bound}`,
             kind: "sector",
             label: `${sector.from_station_id}–${sector.to_station_id}`,
+            sectorId: sector.sector_id,
             locationId: `${sector.sector_id}:${bound}`,
             seq: sector.seq,
             isInterchange: false,

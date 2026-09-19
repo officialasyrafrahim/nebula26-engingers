@@ -71,3 +71,142 @@ export function evidenceIsNeutral(
 ): boolean {
   return reasonKeys.has(key) && !isConfirmingEvidence(value);
 }
+
+// ------------------------------------------------------------------ displaced
+
+// Human labels for the binding constraints the solver can cite when an earlier
+// week is rejected. These name the persisted constraint code truthfully; they
+// are only shown when the matching binding detail actually supports it.
+export const BINDING_LABELS: Record<string, string> = {
+  CAPACITY: "location capacity",
+  WEEKLY_CAP: "the contract weekly access cap",
+  WORKFRONT: "the contract workfront cap",
+  POSSESSION_MIX: "possession mix rules",
+  BUFFER_CLOSURE: "a closure safety buffer",
+  LIVE_MIRROR: "Live opposite-bound mirroring",
+  INTERCHANGE: "an interchange closure",
+};
+
+export interface DisplacementReading {
+  // The explanation carried any displacement keys at all.
+  present: boolean;
+  displaced: boolean;
+  plannedEarliestWeek: number | null;
+  actualFirstWeek: number | null;
+  rejectedWeeks: number[];
+  bindingWeek: number | null;
+  bindingConstraints: string[];
+  bindingDetails: Record<string, unknown>;
+  supportedConstraints: string[];
+  unsupportedConstraints: string[];
+  // The evidence is complete and internally consistent, so a cause may be named.
+  trustworthy: boolean;
+  note: string;
+}
+
+export const DISPLACEMENT_EVIDENCE_KEYS = [
+  "displaced",
+  "planned_earliest_week",
+  "actual_first_week",
+  "rejected_weeks",
+  "binding_week",
+  "binding_constraints",
+  "binding_details",
+] as const;
+
+const DISPLACEMENT_KEYS: readonly string[] = DISPLACEMENT_EVIDENCE_KEYS;
+
+function asWeek(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asWeekList(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is number => typeof item === "number" && Number.isFinite(item))
+    .sort((left, right) => left - right);
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+export function displacementReading(
+  evidence: Record<string, unknown>,
+): DisplacementReading {
+  const present = DISPLACEMENT_KEYS.some((key) => key in evidence);
+  const base: DisplacementReading = {
+    present,
+    displaced: false,
+    plannedEarliestWeek: null,
+    actualFirstWeek: null,
+    rejectedWeeks: [],
+    bindingWeek: null,
+    bindingConstraints: [],
+    bindingDetails: {},
+    supportedConstraints: [],
+    unsupportedConstraints: [],
+    trustworthy: false,
+    note: "No displacement evidence is persisted for this activity, so the board cannot say why an earlier week was not used.",
+  };
+  if (!present) return base;
+
+  const displaced = evidence.displaced === true;
+  const plannedEarliestWeek = asWeek(evidence.planned_earliest_week);
+  const actualFirstWeek = asWeek(evidence.actual_first_week);
+  const rejectedWeeks = asWeekList(evidence.rejected_weeks);
+  const bindingWeek = asWeek(evidence.binding_week);
+  const bindingConstraints = asStringList(evidence.binding_constraints);
+  const bindingDetails =
+    evidence.binding_details && typeof evidence.binding_details === "object"
+      ? (evidence.binding_details as Record<string, unknown>)
+      : {};
+
+  const supportedConstraints: string[] = [];
+  const unsupportedConstraints: string[] = [];
+  for (const code of bindingConstraints) {
+    // A constraint counts as proven only when its persisted detail confirms it.
+    if (isConfirmingEvidence(bindingDetails[code])) supportedConstraints.push(code);
+    else unsupportedConstraints.push(code);
+  }
+
+  const weeksKnown = plannedEarliestWeek != null && actualFirstWeek != null;
+  const bindingConsistent =
+    bindingWeek == null || rejectedWeeks.includes(bindingWeek);
+  const trustworthy =
+    displaced &&
+    weeksKnown &&
+    actualFirstWeek > plannedEarliestWeek &&
+    bindingWeek != null &&
+    bindingConsistent &&
+    supportedConstraints.length > 0;
+
+  let note: string;
+  if (!displaced) {
+    note =
+      weeksKnown && actualFirstWeek === plannedEarliestWeek
+        ? "No earlier week was rejected: the first access sits at the earliest week the planned start and any predecessor allow."
+        : "The solver did not record a rejected earlier week for this activity. The recorded reason codes are the only causes on file.";
+  } else if (trustworthy) {
+    note = "The earliest admissible week was blocked, so the first access was displaced later.";
+  } else {
+    note =
+      "The solver reports displacement but the persisted evidence is incomplete or inconsistent, so the board does not name a binding constraint.";
+  }
+
+  return {
+    present,
+    displaced,
+    plannedEarliestWeek,
+    actualFirstWeek,
+    rejectedWeeks,
+    bindingWeek,
+    bindingConstraints,
+    bindingDetails,
+    supportedConstraints,
+    unsupportedConstraints,
+    trustworthy,
+    note,
+  };
+}
