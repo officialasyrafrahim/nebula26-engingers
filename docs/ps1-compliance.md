@@ -38,9 +38,14 @@ remains required before claiming authoritative parity.
 | Deliverable | Repository status | External action |
 | --- | --- | --- |
 | Public A/B/C results | Generator and validation commands implemented | Generate and commit final answer keys |
-| Hosted live web app | Production Compose stack and runbook implemented | Provision host, DNS, HTTPS and judge access |
-| Three-minute video | Not a repository artifact | Record after public deployment |
+| Hosted live web app | Production Compose stack, helper scripts and runbook implemented; live at `https://engingers.win` | Keep host, DNS, tunnel and Access healthy during judging |
+| Three-minute video | Not a repository artifact | Record against the hosted deployment |
 | GitLab repository URL | Source is currently on GitHub | Mirror or publish to the required GitLab project |
+
+The bonus scope in PS1 section 3.3 is implemented and exposed in the web app:
+disruption replanning with minimal churn, a what-if fragility sandbox and a
+closed-grammar schedule query. The possession calendar and ICS export are an
+additional deliverable beyond the required three-file output.
 
 ## Verification Commands
 
@@ -49,7 +54,9 @@ make test
 make lint
 make sample-validate
 make public-answers-smoke
+make web-test
 make web-build
+make web-e2e
 make features-validate
 ```
 

@@ -68,14 +68,30 @@ make config    # render the resolved compose file
 Wait for every healthcheck to pass before use. `docker compose -f
 deploy/docker-compose.yml ps` shows the state.
 
+For a hosted run that also starts the Cloudflare tunnel and a sleep inhibitor,
+use the idempotent helper scripts. They read `deploy/.env`, start one tmux
+session per concern and are safe to re-run.
+
+```bash
+make rao-start     # stack + tunnel + sleep inhibitor
+make rao-status    # containers, tmux sessions, local and public health
+make rao-stop      # stop the stack, tunnel and helpers
+```
+
+`scripts/rao-start.sh --no-build` skips the image build. The tunnel connector
+wrapper `scripts/rao-tunnel.sh` restarts `cloudflared` if the process exits, so
+the hosted URL recovers on its own. `make rao-tunnel` runs it in the foreground.
+
 ## URLs
 
 | Surface | URL |
 | --- | --- |
 | Control board | http://localhost:5173 |
+| Hosted control board | https://engingers.win |
 | API docs | http://localhost:8000/docs |
 | API health | http://localhost:8000/healthz |
 | Web proxied health | http://localhost:5173/healthz |
+| Hosted health | https://engingers.win/healthz |
 
 ## Publish a URL
 
@@ -139,6 +155,17 @@ still permits download. Only an official pass is `OFFICIALLY VALIDATED`.
 | `RAO_VALIDATOR_COMMAND` | empty | empty selects the fallback oracle |
 | `RAO_API_UPSTREAM` | `api:8000` | nginx proxy upstream |
 | `VITE_API_ORIGIN` | empty | empty keeps the API same origin |
+| `RAO_SEARCH_WORKERS` | `1` | CP-SAT portfolio size; `1` replays a fixed seed, raising it uses more cores |
+| `RAO_DNS_RESOLVER` | `127.0.0.11` | nginx resolver for the api upstream; Podman uses the network gateway |
+| `API_CPUS` / `API_MEMORY` | `4` / `4g` | api CPU and memory caps |
+| `WORKER_CPUS` / `WORKER_MEMORY` | `16` / `32g` | rail-solver-worker caps |
+| `WORKER_MEMORY_RESERVATION` | `8g` | worker soft memory reservation |
+| `DB_MEMORY` / `REDIS_MEMORY` | `4g` / `1g` | db and redis memory caps |
+| `WEB_CPUS` / `WEB_MEMORY` | `2` / `512m` | web CPU and memory caps |
+| `LTA_DATAMALL_ACCOUNT_KEY` | empty | enables advisory DataMall context; empty makes no egress |
+| `RAO_TUNNEL_TOKEN` | empty | Cloudflare named-tunnel token for `make rao-start`; never committed |
+| `RAO_TUNNEL_TOKEN_FILE` | `/tmp/opencode/cf_token` | file fallback for the tunnel token |
+| `RAO_PUBLIC_URL` | empty | optional public URL verified by `make rao-start` |
 | `WEB_BIND_ADDRESS` | `127.0.0.1` | loopback for an HTTPS reverse proxy; `0.0.0.0` for trusted direct access |
 | `WEB_HOST_PORT` | `5173` | host port for the browser application |
 | `API_HOST_PORT` | `8000` | loopback API/debug port |

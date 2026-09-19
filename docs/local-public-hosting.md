@@ -78,9 +78,14 @@ Current Cloudflare guidance is to create a dashboard managed tunnel.
 
 The dashboard connector command contains a **tunnel token**. This is not the
 Cloudflare Global API Key and not a general API token. Treat it as a password for
-that one tunnel. In the host-service setup used below, pass it directly to the
-generated install command. `cloudflared` stores it in the local service
-configuration. Do not add it to the repository or `deploy/.env`.
+that one tunnel. Never commit it and never put it in a tracked file.
+
+The helper scripts read the token from `RAO_TUNNEL_TOKEN`, or from a file named
+by `RAO_TUNNEL_TOKEN_FILE`. Put the token in the gitignored `deploy/.env` so
+`make rao-start` can bring the named tunnel back after a restart. The connector
+wrapper passes it to `cloudflared` through the `TUNNEL_TOKEN` environment
+variable, so it never appears in a process argument list. See the systemd note
+under the recommended path for boot persistence.
 
 A Cloudflare API token is only needed for API or Terraform automation. The
 dashboard-managed connector does not need one, and it must never use the account
@@ -358,8 +363,21 @@ and gates judges by email or SSO before they reach the SPA. It is one of the few
 options here that adds real per user authentication to an app with no login of
 its own.
 
+Run the stack and the supervised connector from the repository. The connector
+reads the token from the gitignored `deploy/.env` and restarts itself if the
+process exits:
+
 ```sh
-make up
+make rao-start     # stack + named tunnel + sleep inhibitor, all in tmux
+make rao-status    # containers, tmux sessions, local and public health
+make rao-stop      # stop everything
+```
+
+For boot persistence, install `cloudflared` as a service instead. This needs
+`sudo`, and the token is stored in the service configuration rather than
+`deploy/.env`:
+
+```sh
 sudo cloudflared service install <TUNNEL_TOKEN>
 ```
 

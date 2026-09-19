@@ -2,7 +2,7 @@
 
 RAO is a browser-accessible railway possession planning application. Judges and planners upload the eight planning-instance CSVs through the web interface, run Scenarios A/B/C through the queued solver API, inspect the linked track schematic and schedule evidence, then download exact submission files.
 
-Core workflow: **Ingest → Model → Optimise → Validate → Explain → Export**.
+Core workflow: **Ingest → Inspect → Optimise → Validate → Explain → Calendar → Export**.
 
 It is a planning decision-support tool. It does not control trains, write to a CMMS/EAM, or let an LLM own feasibility, scoring or scheduling. There is no LLM on any pipeline path.
 
@@ -18,6 +18,9 @@ It is a planning decision-support tool. It does not control trains, write to a C
 | Hosted upload-to-download web workflow | Real-time train control |
 | Async solve worker and deterministic reasons | Live personnel or CCTV tracking |
 | Scenario A/B/C distinct answer keys | Legacy RMIS predictive-maintenance modules |
+| Possession calendar and ICS export | Calendaring of live train movements |
+| Bonus disruption replan, what-if sandbox and schedule query | Automated dispatch or signalling control |
+| Optional advisory LTA DataMall context (no egress without a key) | DataMall data as a scoring or feasibility input |
 
 The legacy RMIS predictive-maintenance code (`assets`, `ingestion`, `condition`, `assessment`, `approvals`, `execution`, `integration`, `assistant`, `model_registry`, `planning`) has been **removed** from the repository. Git history preserves it; the current tree contains only the rail pipeline.
 
@@ -90,11 +93,11 @@ Services: `db` (PostgreSQL 16), `redis` (Redis 7), `api`, `rail-solver-worker`, 
 
 ### Hosted web app
 
-The browser is the judge-facing entry point. It provides the hidden-instance upload, scenario dispatch, job polling, network schematic, timeline, physical assurance, fallback/official validator status and gated download. Browser requests remain same-origin: nginx serves the SPA and proxies `/api` and `/healthz` to FastAPI.
+The browser is the judge-facing entry point. It provides the hidden-instance upload, scenario dispatch, job polling, network schematic, timeline, physical assurance, possession calendar, fallback/official validator status, gated download, and the bonus replan, what-if sandbox and schedule query panels. Browser requests remain same-origin: nginx serves the SPA and proxies `/api` and `/healthz` to FastAPI.
 
-For a public deployment, expose the web service through an HTTPS reverse proxy and keep PostgreSQL, Redis and the API bound to localhost or the Compose network. The application currently has a development role-header stub rather than production identity management, so protect the public URL with a reverse-proxy allowlist or authentication shared with the judges. Uploaded instance files remain inside PostgreSQL and are not sent to third-party services. See `docs/local-public-hosting.md` for public tunnels, temporary domains and private zero-trust access options.
+For a public deployment, expose the web service through an HTTPS reverse proxy and keep PostgreSQL, Redis and the API bound to localhost or the Compose network. The application currently has a development role-header stub rather than production identity management, so protect the public URL with a reverse-proxy allowlist or authentication shared with the judges. Uploaded instance files remain inside PostgreSQL and are not sent to third-party services, and the optional DataMall context performs no egress without a configured key. See `docs/local-public-hosting.md` for public tunnels, temporary domains and private zero-trust access options.
 
-The repository contains production images and the hosted runbook. Publishing the final URL still requires a host, DNS name and credentials supplied by the team.
+The repository contains production images, the hosted runbook and idempotent helper scripts (`scripts/rao-start.sh`, `rao-stop.sh`, `rao-status.sh`, `rao-tunnel.sh`, exposed as `make rao-start|rao-stop|rao-status|rao-tunnel`). The hosted deployment currently runs at `https://engingers.win` behind a Cloudflare named tunnel with Cloudflare Access in front.
 
 ## Architecture
 
@@ -161,6 +164,14 @@ All endpoints are under `/api/v1`. Long work is queued and returns `202`; a solv
 | POST | `/api/v1/runs/{run_id}/jobs/{job_id}/cancel` | Best-effort cancellation |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}/schedule` | Access, physical-slot witness, occupancy, results, explanations and internal checks; `409` until `COMPLETED` |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}/report` | Independent validator report and gate; `409` until it exists |
+| POST | `/api/v1/runs/{run_id}/jobs/{job_id}/replan` | Impact-assess a disruption and return a minimal-churn replan and diff |
+| GET | `/api/v1/runs/{run_id}/replans/{replan_id}` | Fetch a persisted replan |
+| POST | `/api/v1/runs/{run_id}/jobs/{job_id}/sandbox` | Evaluate a what-if over a completed job without persisting it |
+| POST | `/api/v1/runs/{run_id}/jobs/{job_id}/query` | Answer one closed-grammar schedule query from persisted evidence |
+| GET | `/api/v1/runs/{run_id}/jobs/{job_id}/calendar` | Assured possession calendar for a completed job |
+| GET | `/api/v1/runs/{run_id}/jobs/{job_id}/calendar/ics` | Download the calendar as an ICS file |
+| POST | `/api/v1/runs/{run_id}/jobs/{job_id}/calendar/publish` | Publish a calendar version |
+| GET | `/api/v1/context/datamall/{status,context,passenger-volume,od-volume,crowd-density,crowd-forecast,alerts}` | Optional advisory DataMall context; empty or inactive unless a key is configured |
 | GET | `/api/v1/runs/{run_id}/jobs/{job_id}/export` | Scenario zip; `409` unless `ready_for_submission` |
 | GET | `/healthz` | Unauthenticated liveness check |
 
@@ -198,14 +209,13 @@ The fallback reproduces the published sample: `make sample-validate` must report
 
 ## Deliverable status
 
-This repository contains the solver, queued API, production web application, hidden-dataset upload flow, control board, deployment packaging and hosted operations runbook. The following submission items remain external:
+This repository contains the solver, queued API, production web application, hidden-dataset upload flow, seven-stage control board, possession calendar, optional advisory DataMall context, bonus replan/sandbox/query features, deployment packaging and hosted operations runbook.
 
-- The official PS1 validator is absent; only the independent fallback is executable.
-- There is no public hosted URL.
+- The official PS1 validator is absent; only the independent fallback is executable, so fallback-only success is labelled `PROVISIONAL`.
+- The hosted deployment is provisioned at `https://engingers.win` behind a Cloudflare named tunnel; see `docs/deployment-runbook.md`.
 - Generated A/B/C answer keys are not committed; only `data/submission-sample/` ships.
-- There is no demo video.
+- There is no demo video yet.
 - There is no published GitLab submission URL; the current upstream is GitHub.
-- Bonus features (dynamic replanning, what-if sandbox, natural-language query) are backlog.
 
 ## Data directory
 
@@ -229,7 +239,14 @@ make test-public-sample    # pytest the public-sample and adapter tests
 make inspect-instance      # read-only parse/compile report for an instance directory
 make public-answers-smoke  # solve and validate A/B/C with bounded CI budgets
 make public-answers        # generate full public answer directories and archives
+make web-install           # install frontend dependencies
+make web-test              # frontend unit tests
 make web-build             # type-check and build the frontend (needs Node)
+make web-e2e               # Playwright browser acceptance suite (needs chromium)
+make features-validate     # validate the feature registry
+make rao-start             # bring up the stack, tunnel and sleep inhibitor in tmux
+make rao-status            # show containers, tmux sessions and health
+make rao-stop              # stop the stack, tunnel and helpers
 ```
 
 See `docs/hygiene.md` for the ignore policy, the inspect CLI and the root-level Windows helpers (`setup-windows.cmd`, `start-windows.cmd`, `test-windows.cmd`).

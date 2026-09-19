@@ -13,7 +13,7 @@ files or build artifacts. This page records the policy and the new commands.
 | `.venv/`, `node_modules/` | local installs |
 | `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/` | caches |
 | `dist/`, `build/`, `*.egg-info/` | build output |
-| `*.zip`, `RAO-main.zip` | distributable archives that may embed env files |
+| `*.zip` | distributable archives that may embed env files |
 | `.env`, `deploy/.env`, `*.local` | secrets and local overrides |
 | `*.db`, `*.sqlite*` | local SQLite databases |
 | `*.log`, `.direnv/`, `.envrc` | local logs and per-user tooling |
@@ -30,9 +30,11 @@ git rm --cached path/to/file
 git status --short --ignored
 ```
 
-The audit confirmed the two root archives, `RAO-main.zip` and
-`RAO_Possession_Calendar_Project.zip`, are untracked and ignored. They are left
-on disk on purpose.
+The audit confirmed the reference archives in the repository root are untracked
+and ignored. `*.zip` is ignored globally, with one explicit negation for the
+small calendar demo archives under `examples/calendar-demo/`. Any other root
+archive, for example `RAO_BetterScore.zip` or `RAO-main.zip`, is left on disk on
+purpose and is never staged.
 
 ## Inspect an instance
 

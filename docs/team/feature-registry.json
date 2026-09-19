@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_on": "2026-09-18",
+  "updated_on": "2026-09-19",
   "developers": [
     {
       "id": "DEV-1",
@@ -620,7 +620,7 @@
       "owner": "DEV-2",
       "reviewer": "DEV-1",
       "area": "solver",
-      "status": "backlog",
+      "status": "review",
       "milestone": "bonus",
       "estimate_points": 8,
       "requirements": [
@@ -633,10 +633,10 @@
         "backend/app/modules/solver/replan.py"
       ],
       "labels": [
-        "owner:dev-2-solver",
         "area:solver",
-        "status:backlog",
-        "type:feature"
+        "type:feature",
+        "owner:dev-2-solver",
+        "status:review"
       ],
       "completion": null
     },
@@ -646,7 +646,7 @@
       "owner": "DEV-2",
       "reviewer": "DEV-1",
       "area": "solver",
-      "status": "backlog",
+      "status": "review",
       "milestone": "bonus",
       "estimate_points": 8,
       "requirements": [
@@ -657,10 +657,10 @@
         "backend/app/modules/solver/sandbox.py"
       ],
       "labels": [
-        "owner:dev-2-solver",
         "area:solver",
-        "status:backlog",
-        "type:feature"
+        "type:feature",
+        "owner:dev-2-solver",
+        "status:review"
       ],
       "completion": null
     },
@@ -784,7 +784,6 @@
       ],
       "paths": [
         "backend/app/modules/validator/adapter.py",
-        "backend/tests/test_validator_adapter.py",
         "backend/tests/test_validator_fallback.py"
       ],
       "labels": [
@@ -1244,7 +1243,7 @@
       "owner": "DEV-4",
       "reviewer": "DEV-3",
       "area": "frontend",
-      "status": "backlog",
+      "status": "review",
       "milestone": "bonus",
       "estimate_points": 5,
       "requirements": [
@@ -1253,14 +1252,15 @@
       "acceptance_tests": [],
       "paths": [
         "backend/app/modules/explain/query.py",
-        "frontend/src/features/assistant/"
+        "frontend/src/components/ScheduleQueryPanel.tsx",
+        "frontend/src/lib/scheduleQuery.ts"
       ],
       "labels": [
-        "owner:dev-4-experience",
         "area:frontend",
-        "status:backlog",
         "type:feature",
-        "risk:data-egress"
+        "risk:data-egress",
+        "owner:dev-4-experience",
+        "status:review"
       ],
       "completion": null
     },
@@ -1362,7 +1362,7 @@
       "owner": "DEV-4",
       "reviewer": "DEV-3",
       "area": "frontend",
-      "status": "backlog",
+      "status": "review",
       "milestone": "p6-control-board",
       "estimate_points": 8,
       "requirements": [
@@ -1377,7 +1377,7 @@
         "area:frontend",
         "type:feature",
         "owner:dev-4-experience",
-        "status:backlog"
+        "status:review"
       ],
       "completion": null
     },
@@ -1387,7 +1387,7 @@
       "owner": "DEV-4",
       "reviewer": "DEV-3",
       "area": "frontend",
-      "status": "backlog",
+      "status": "review",
       "milestone": "p6-control-board",
       "estimate_points": 13,
       "requirements": [
@@ -1403,7 +1403,7 @@
         "area:frontend",
         "type:feature",
         "owner:dev-4-experience",
-        "status:backlog"
+        "status:review"
       ],
       "completion": null
     },
@@ -1413,7 +1413,7 @@
       "owner": "DEV-4",
       "reviewer": "DEV-3",
       "area": "frontend",
-      "status": "backlog",
+      "status": "review",
       "milestone": "p6-control-board",
       "estimate_points": 8,
       "requirements": [
@@ -1431,7 +1431,7 @@
         "area:frontend",
         "type:feature",
         "owner:dev-4-experience",
-        "status:backlog"
+        "status:review"
       ],
       "completion": null
     },
@@ -1537,7 +1537,7 @@
       "owner": "DEV-4",
       "reviewer": "DEV-3",
       "area": "frontend",
-      "status": "backlog",
+      "status": "review",
       "milestone": "p7-mapped-sandbox",
       "estimate_points": 5,
       "requirements": [
@@ -1552,7 +1552,7 @@
         "area:frontend",
         "type:feature",
         "owner:dev-4-experience",
-        "status:backlog"
+        "status:review"
       ],
       "completion": null
     }

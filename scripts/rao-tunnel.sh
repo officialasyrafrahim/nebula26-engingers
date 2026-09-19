@@ -35,4 +35,11 @@ if [ -z "$TOKEN" ]; then
 fi
 
 export TUNNEL_TOKEN="$TOKEN"
-exec nix run nixpkgs#cloudflared -- tunnel --no-autoupdate run
+
+# Supervise the connector. cloudflared reconnects on network blips itself, but
+# if the process exits we restart it so the hosted URL recovers on its own.
+while true; do
+  nix run nixpkgs#cloudflared -- tunnel --no-autoupdate run || true
+  echo "[rao-tunnel] cloudflared exited; restarting in 5s" >&2
+  sleep 5
+done

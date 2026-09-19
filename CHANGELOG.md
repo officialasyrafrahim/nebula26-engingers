@@ -4,6 +4,11 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Add an assured possession calendar stage with ICS export and a publish action.
+- Add idempotent hosted start, stop, status and tunnel helper scripts with Makefile targets.
+- Supervise the Cloudflare connector so the hosted URL recovers when the process exits.
+- Cap solver worker CPU and memory and align the Compose defaults to 16 CPUs and 32 GiB.
+- Fix a duplicated `RAO_SEARCH_WORKERS` entry in the environment template.
 - Make the published score strictly dominate the overshoot tie-break and add an opt-in multi-worker search portfolio.
 - Fix judge-facing truthfulness in the calendar, scenario comparison, replan panel and authority claims.
 - Break a circular import that crash-looped the solver worker container and add a fresh-interpreter guard.

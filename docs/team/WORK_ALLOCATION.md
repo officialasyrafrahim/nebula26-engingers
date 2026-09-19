@@ -2,7 +2,7 @@
 
 `docs/team/feature-registry.json` is the source of truth for ownership, reviewer, status, ERD requirements, acceptance scenarios, paths and labels. Developer IDs are stable role identifiers; replace each `github_handle` when the actual team is known. Until handles are populated, ownership/completion identity is an explicit team convention and the tools emit a warning rather than claiming identity verification.
 
-The product is the Rail Access Optimisation and Replanning System from `Rail_Access_Optimisation_ERD_v2.0.xlsx`. The core workflow is **Ingest -> Model -> Optimise -> Validate -> Explain -> Export**, and the primary success gate is a complete, safety-feasible, scenario-scored possession schedule. Predictive-maintenance, telemetry, ML and CMMS work from the previous system is out of scope.
+The product is the Rail Access Optimisation and Replanning System from `Rail_Access_Optimisation_ERD_v2.0.xlsx`. The core workflow is **Ingest -> Inspect -> Optimise -> Validate -> Explain -> Calendar -> Export**, and the primary success gate is a complete, safety-feasible, scenario-scored possession schedule. Predictive-maintenance, telemetry, ML and CMMS work from the previous system is out of scope.
 
 ## Ownership lanes
 
@@ -22,7 +22,7 @@ Next work from the current statuses:
 | DEV-3 | Review `F-VALIDATOR-005`, `F-RUNS-003`, `F-VALIDATOR-003` and `F-QA-001`; keep `F-VALIDATOR-004` blocked until the official validator is supplied | 32 |
 | DEV-4 | Review `F-CONTROL-006`, `F-CONTROL-001/002` and the earlier frontend features; then `F-CONTROL-005`, `F-CONTROL-003`, `F-CONTROL-004` and `F-CONTROL-007` | 99 |
 
-The basic-functionality work takes priority over `F-BONUS-001/002/003`. Bonus work remains in the registry but does not start until the core acceptance sequence below passes.
+The basic-functionality work took priority over `F-BONUS-001/002/003`. The bonus features are now implemented and in review; they stayed gated behind the core acceptance sequence below.
 
 ## Core acceptance sequence
 
@@ -84,7 +84,7 @@ Ownership means delivery responsibility, not exclusive edit permission. Cross-la
 | `p7-mapped-sandbox` | Real DTL/CCL topologies with synthetic programmes for demonstration and stress | P7 - Mapped sandbox |
 | `bonus` | Urgent-maintenance replanning, NL query and extensions | Bonus scope |
 
-The `v0.3.0` baseline records the original rail instance, compiler, solver, scenario, validator, export, runs and upload features as done. The PS1 alignment follow-up implementation now passes the backend suite, authoritative sample gate, bounded public A/B/C generation and production frontend build. `F-COMPILER-002`, `F-SOLVER-007/008`, `F-VALIDATOR-003`, `F-QA-001`, `F-EXPLAIN-001` and `F-DEPLOY-002` await reviewer acceptance. The P6 control board has landed its first slice: `F-RUNS-003` publishes the internal physical slot and compiled activity spans, and `F-CONTROL-001/002` add the linked track schematic and possession drawer. The assurance layer has landed too: `F-VALIDATOR-005` adds the independent physical witness check, `F-CONTROL-006` renders the three-layer validation status, and `F-DATA-001` generates mapped DTL/CCL sandbox datasets. These await reviewer acceptance. `F-VALIDATOR-004` remains blocked until the official validator is supplied. `F-TIMELINE-001` and `F-EXPLAIN-002` remain in review. `F-CONTROL-003/004/005` and the bonus features remain in backlog.
+The `v0.3.0` baseline records the original rail instance, compiler, solver, scenario, validator, export, runs and upload features as done. The PS1 alignment follow-up implementation now passes the backend suite, authoritative sample gate, bounded public A/B/C generation and production frontend build. `F-COMPILER-002`, `F-SOLVER-007/008`, `F-VALIDATOR-003`, `F-QA-001`, `F-EXPLAIN-001` and `F-DEPLOY-002` await reviewer acceptance. The P6 control board has landed its first slice: `F-RUNS-003` publishes the internal physical slot and compiled activity spans, and `F-CONTROL-001/002` add the linked track schematic and possession drawer. The assurance layer has landed too: `F-VALIDATOR-005` adds the independent physical witness check, `F-CONTROL-006` renders the three-layer validation status, and `F-DATA-001` generates mapped DTL/CCL sandbox datasets. These await reviewer acceptance. `F-VALIDATOR-004` remains blocked until the official validator is supplied. `F-TIMELINE-001`, `F-EXPLAIN-002`, `F-CONTROL-003/004/005/007` and the bonus features `F-BONUS-001/002/003` are implemented and in review. The hosted deployment (`F-DEPLOY-002`) also now includes the helper scripts and a live URL. The registry records no remaining backlog.
 
 ## Feature lifecycle
 
