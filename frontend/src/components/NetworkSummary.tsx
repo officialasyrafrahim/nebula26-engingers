@@ -62,7 +62,7 @@ export default function NetworkSummary({ network }: NetworkSummaryProps) {
   return (
     <Panel
       title="Network summary"
-      eyebrow="Parsed topology · /network"
+      eyebrow="Stage 2 · Inspect · parsed topology"
       actions={
         <span className="panel__meter">
           {Object.keys(routes).length} expanded routes

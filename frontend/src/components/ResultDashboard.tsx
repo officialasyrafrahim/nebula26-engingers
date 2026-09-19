@@ -18,6 +18,7 @@ import ValidatorGate from "./ValidatorGate";
 import ViolationsPanel from "./ViolationsPanel";
 
 interface ResultDashboardProps {
+  section: "validate" | "explain" | "export";
   runId: string;
   jobId: string;
   scenario: string;
@@ -30,6 +31,7 @@ interface ResultDashboardProps {
 }
 
 export default function ResultDashboard({
+  section,
   runId,
   jobId,
   scenario,
@@ -42,23 +44,42 @@ export default function ResultDashboard({
 }: ResultDashboardProps) {
   const selectedActivityId = selection?.activityId ?? null;
 
-  return (
-    <div className="dashboard" aria-label={`Scenario ${scenario} result dashboard`}>
-      <AssurancePanel report={report} physicalChecks={schedule.physical_checks} />
+  if (section === "validate") {
+    return (
+      <div className="dashboard" aria-label={`Scenario ${scenario} validation dashboard`}>
+        <AssurancePanel report={report} physicalChecks={schedule.physical_checks} />
 
-      <div className="dashboard__gates">
-        <ValidatorGate report={report} />
-        <ScorePanel scores={report.soft_scores} scenario={scenario} />
+        <div className="dashboard__gates">
+          <ValidatorGate report={report} />
+          <ScorePanel scores={report.soft_scores} scenario={scenario} />
+        </div>
+
+        <ViolationsPanel violations={report.hard_violations} />
+
+        <HotspotsPanel
+          hotspots={report.detail.capacity_hotspots}
+          scenario={schedule.scenario}
+          hardViolations={report.hard_violations}
+        />
       </div>
+    );
+  }
 
-      <ViolationsPanel violations={report.hard_violations} />
+  if (section === "export") {
+    return (
+      <div className="dashboard" aria-label={`Scenario ${scenario} export`}>
+        <DownloadPanel
+          runId={runId}
+          jobId={jobId}
+          scenario={scenario}
+          report={report}
+        />
+      </div>
+    );
+  }
 
-      <HotspotsPanel
-        hotspots={report.detail.capacity_hotspots}
-        scenario={schedule.scenario}
-        hardViolations={report.hard_violations}
-      />
-
+  return (
+    <div className="dashboard" aria-label={`Scenario ${scenario} schedule evidence`}>
       <ContractTable
         results={schedule.results}
         contracts={network.contracts}
@@ -92,13 +113,6 @@ export default function ResultDashboard({
         explanations={schedule.explanations}
         selectedActivityId={selectedActivityId}
         onSelect={onSelect}
-      />
-
-      <DownloadPanel
-        runId={runId}
-        jobId={jobId}
-        scenario={scenario}
-        report={report}
       />
 
       {selection ? (

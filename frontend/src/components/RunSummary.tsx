@@ -32,7 +32,7 @@ export default function RunSummary({ run }: RunSummaryProps) {
   return (
     <Panel
       title="Parse summary"
-      eyebrow={`Run ${run.id.slice(0, 8)}`}
+      eyebrow={`Stage 2 · Inspect · run ${run.id.slice(0, 8)}`}
       tone={ok ? "ok" : "danger"}
       actions={
         <span className="gate-inline">

@@ -4,6 +4,13 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Block submission export when the persisted physical witness fails.
+- Upgrade existing `v0.3.0` database volumes with the physical-night column.
+- Add frontend assurance tests and show soft capacity excess details.
+- Document secure local publishing with Cloudflare Tunnel and alternatives.
+- Exclude local backend environments and test artifacts from container builds.
+- Organise the judge workflow into accessible staged tabs.
+
 ### Added
 
 - Explicit physical possession slots and an independent persisted witness check.

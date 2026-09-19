@@ -30,8 +30,13 @@ import RunSummary from "./components/RunSummary";
 import ScenarioLauncher from "./components/ScenarioLauncher";
 import SignalLamp, { type LampTone } from "./components/SignalLamp";
 import UploadPanel from "./components/UploadPanel";
+import WorkflowTabs from "./components/WorkflowTabs";
 import { useJobPolling } from "./hooks/useJobPolling";
 import type { ActivitySelection } from "./lib/schematic";
+import {
+  stageAfterResultLoad,
+  type WorkflowStageId,
+} from "./lib/workflow";
 
 type HealthState = "checking" | "ok" | "unavailable";
 
@@ -59,6 +64,7 @@ function jobTone(state: string): LampTone {
 }
 
 export default function App() {
+  const [activeStage, setActiveStage] = useState<WorkflowStageId>("ingest");
   const [health, setHealth] = useState<HealthState>("checking");
   const [healthError, setHealthError] = useState<string | null>(null);
 
@@ -86,13 +92,43 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const selectedRunId = selectedRun?.id ?? null;
+  const activeStageRef = useRef<WorkflowStageId>(activeStage);
   const selectedRunIdRef = useRef<string | null>(selectedRunId);
+  const focusStageOnChangeRef = useRef(false);
+  const lastOpenedResultKeyRef = useRef<string | null>(null);
+  const resultRequestRef = useRef(0);
+  activeStageRef.current = activeStage;
   selectedRunIdRef.current = selectedRunId;
 
-  const { job: polledJob, error: pollError } = useJobPolling(
+  const activateStage = useCallback(
+    (stage: WorkflowStageId, focusPanel = false) => {
+      if (stage === activeStageRef.current) {
+        focusStageOnChangeRef.current = false;
+        if (focusPanel) {
+          document.getElementById(`workflow-panel-${stage}`)?.focus();
+        }
+        return;
+      }
+      focusStageOnChangeRef.current = focusPanel;
+      setActiveStage(stage);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!focusStageOnChangeRef.current) return;
+    focusStageOnChangeRef.current = false;
+    document.getElementById(`workflow-panel-${activeStage}`)?.focus();
+  }, [activeStage]);
+
+  const { job: polledJobResult, error: pollError } = useJobPolling(
     selectedRunId,
     trackedJobId,
   );
+  const polledJob =
+    polledJobResult?.run_id === selectedRunId && polledJobResult.id === trackedJobId
+      ? polledJobResult
+      : null;
 
   const jobs = useMemo(
     () => (selectedRunId ? (jobsByRun[selectedRunId] ?? []) : []),
@@ -129,6 +165,7 @@ export default function App() {
   }, [refreshHealth, refreshRuns]);
 
   const loadResults = useCallback(async (runId: string, jobId: string) => {
+    const requestId = ++resultRequestRef.current;
     setResultsLoading(true);
     setResultError(null);
     try {
@@ -136,20 +173,35 @@ export default function App() {
         getSchedule(runId, jobId),
         getReport(runId, jobId),
       ]);
-      if (selectedRunIdRef.current !== runId) return;
+      if (
+        selectedRunIdRef.current !== runId ||
+        resultRequestRef.current !== requestId
+      ) {
+        return;
+      }
       setScheduleData(schedule);
       setReportData(report);
       setLoadedJobId(jobId);
       setSelection(null);
     } catch (caught) {
-      if (selectedRunIdRef.current !== runId) return;
+      if (
+        selectedRunIdRef.current !== runId ||
+        resultRequestRef.current !== requestId
+      ) {
+        return;
+      }
       setScheduleData(null);
       setReportData(null);
       setLoadedJobId(null);
       setSelection(null);
       setResultError(errorMessage(caught));
     } finally {
-      if (selectedRunIdRef.current === runId) setResultsLoading(false);
+      if (
+        selectedRunIdRef.current === runId &&
+        resultRequestRef.current === requestId
+      ) {
+        setResultsLoading(false);
+      }
     }
   }, []);
 
@@ -179,10 +231,12 @@ export default function App() {
   }, [selectedRun]);
 
   useEffect(() => {
+    resultRequestRef.current += 1;
     setScheduleData(null);
     setReportData(null);
     setLoadedJobId(null);
     setResultError(null);
+    setResultsLoading(false);
     setTrackedJobId(null);
     setSelection(null);
     if (!selectedRunId) return;
@@ -245,9 +299,10 @@ export default function App() {
       setRuns((current) => [run, ...current]);
       setJobsByRun((current) => ({ ...current, [run.id]: [] }));
       setSelectedRun(run);
+      activateStage("inspect", true);
       setActionError(null);
     },
-    [],
+    [activateStage],
   );
 
   const handleLaunch = useCallback(
@@ -259,7 +314,10 @@ export default function App() {
       if (!selectedRun) {
         throw new Error("Select a planning run before dispatching a scenario.");
       }
+      resultRequestRef.current += 1;
+      setResultsLoading(false);
       setLaunching(scenario);
+      activateStage("optimise", true);
       setActionError(null);
       try {
         const payload: ScenarioJobCreate = { scenario };
@@ -284,7 +342,7 @@ export default function App() {
         setLaunching(null);
       }
     },
-    [selectedRun],
+    [activateStage, selectedRun],
   );
 
   const handleCancel = useCallback(async (job: ScenarioJob) => {
@@ -312,8 +370,12 @@ export default function App() {
     (job: ScenarioJob) => {
       setTrackedJobId(job.id);
       if (job.state === "COMPLETED") {
+        activateStage("validate", true);
         void loadResults(job.run_id, job.id);
       } else if (isActiveJob(job.state)) {
+        resultRequestRef.current += 1;
+        setResultsLoading(false);
+        activateStage("optimise", true);
         setScheduleData(null);
         setReportData(null);
         setLoadedJobId(null);
@@ -321,7 +383,15 @@ export default function App() {
         setSelection(null);
       }
     },
-    [loadResults],
+    [activateStage, loadResults],
+  );
+
+  const handleSelectRun = useCallback(
+    (run: PlanningRun) => {
+      setSelectedRun(run);
+      activateStage("inspect", true);
+    },
+    [activateStage],
   );
 
   const handleSelect = useCallback((next: ActivitySelection) => {
@@ -339,6 +409,38 @@ export default function App() {
     network != null &&
     scheduleData.run_id === selectedRun.id &&
     scheduleData.job_id === loadedJobId;
+
+  const resultKey = resultReady && scheduleData
+    ? `${scheduleData.run_id}:${scheduleData.job_id}`
+    : null;
+
+  useEffect(() => {
+    const nextStage = stageAfterResultLoad(
+      activeStage,
+      lastOpenedResultKeyRef.current,
+      resultKey,
+    );
+    if (resultKey != null) {
+      lastOpenedResultKeyRef.current = resultKey;
+    }
+    if (nextStage !== activeStage) {
+      activateStage(nextStage, true);
+    }
+  }, [activateStage, activeStage, resultKey]);
+
+  const workflowReadiness = {
+    hasRun: selectedRun != null,
+    hasNetwork: network != null,
+    hasJob: trackedJobId != null,
+    hasResults: resultReady,
+  };
+
+  const resolvedReport = reportData
+    ? {
+        ...reportData.report,
+        ready_for_submission: reportData.ready_for_submission,
+      }
+    : null;
 
   return (
     <div className="app">
@@ -402,36 +504,53 @@ export default function App() {
         </div>
       ) : null}
 
-      <main className="board">
-        <div className="board__column">
-          <UploadPanel onUpload={handleUpload} />
-          <RunLibrary
-            runs={runs}
-            selectedRunId={selectedRunId}
-            loading={runsLoading}
-            error={runsError}
-            onSelect={setSelectedRun}
-            onRefresh={() => void refreshRuns()}
-          />
-        </div>
+      <WorkflowTabs
+        activeStage={activeStage}
+        readiness={workflowReadiness}
+        onChange={setActiveStage}
+      />
 
-        <div className="board__column">
-          {!selectedRun ? (
-            <Panel title="Control desk idle" eyebrow="Awaiting a planning run">
-              <p className="empty">
-                Compile an eight-CSV instance or select a recent run to arm the
-                scenario dispatch console. The board shows parse health, network
-                topology, scenario jobs and the validated result dashboard.
-              </p>
-            </Panel>
-          ) : (
-            <>
+      <main className="workflow-content">
+        <section
+          id="workflow-panel-ingest"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-ingest"
+          tabIndex={-1}
+          hidden={activeStage !== "ingest"}
+          className="workflow-panel"
+        >
+          <div className="board board--intake">
+            <div className="board__column">
+              <UploadPanel onUpload={handleUpload} />
+            </div>
+            <div className="board__column">
+              <RunLibrary
+                runs={runs}
+                selectedRunId={selectedRunId}
+                loading={runsLoading}
+                error={runsError}
+                onSelect={handleSelectRun}
+                onRefresh={() => void refreshRuns()}
+              />
+            </div>
+          </div>
+        </section>
+
+        <section
+          id="workflow-panel-inspect"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-inspect"
+          tabIndex={-1}
+          hidden={activeStage !== "inspect"}
+          className="workflow-panel"
+        >
+          {selectedRun ? (
+            <div className="dashboard">
               <RunSummary run={selectedRun} />
-
               {network ? (
                 <NetworkSummary network={network} />
               ) : (
-                <Panel title="Network summary" eyebrow="Parsed topology · /network">
+                <Panel title="Network summary" eyebrow="Stage 2 · Inspect · /network">
                   {networkError ? (
                     <div className="notice notice--danger" role="alert">
                       <span className="notice__title">Could not load network</span>
@@ -444,7 +563,20 @@ export default function App() {
                   )}
                 </Panel>
               )}
+            </div>
+          ) : null}
+        </section>
 
+        <section
+          id="workflow-panel-optimise"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-optimise"
+          tabIndex={-1}
+          hidden={activeStage !== "optimise"}
+          className="workflow-panel"
+        >
+          {selectedRun ? (
+            <div className="dashboard">
               <ScenarioLauncher
                 disabled={!network}
                 launching={launching}
@@ -453,47 +585,114 @@ export default function App() {
                 onLaunch={handleLaunch}
                 onInspectJob={handleInspectJob}
               />
-
               <JobMonitor
                 job={polledJob}
                 pollError={pollError}
                 cancelling={cancelling}
                 onCancel={handleCancel}
               />
+            </div>
+          ) : null}
+        </section>
 
-              {resultsLoading ? (
-                <Panel title="Result dashboard" eyebrow="Loading validated schedule">
-                  <p className="empty" role="status" aria-live="polite">
-                    Fetching schedule and validator report…
-                  </p>
-                </Panel>
-              ) : null}
+        <section
+          id="workflow-panel-validate"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-validate"
+          tabIndex={-1}
+          hidden={activeStage !== "validate"}
+          className="workflow-panel"
+        >
+          {resultsLoading ? (
+            <Panel title="Validation console" eyebrow="Stage 4 · Loading evidence">
+              <p className="empty" role="status" aria-live="polite">
+                Fetching the schedule, physical witness and validator report…
+              </p>
+            </Panel>
+          ) : null}
 
-              {resultError && !resultsLoading ? (
-                <Panel title="Result dashboard" eyebrow="Unavailable" tone="danger">
-                  <div className="notice notice--danger" role="alert">
-                    <span className="notice__title">Results unavailable</span>
-                    <p>{resultError}</p>
-                  </div>
-                </Panel>
-              ) : null}
+          {resultError && !resultsLoading ? (
+            <Panel title="Validation console" eyebrow="Stage 4 · Unavailable" tone="danger">
+              <div className="notice notice--danger" role="alert">
+                <span className="notice__title">Results unavailable</span>
+                <p>{resultError}</p>
+              </div>
+            </Panel>
+          ) : null}
 
-              {resultReady && scheduleData && reportData && selectedRun && network ? (
-                <ResultDashboard
-                  runId={selectedRun.id}
-                  jobId={scheduleData.job_id}
-                  scenario={scheduleData.scenario}
-                  schedule={scheduleData}
-                  report={reportData.report}
-                  network={network}
-                  selection={selection}
-                  onSelect={handleSelect}
-                  onClearSelection={handleClearSelection}
-                />
-              ) : null}
-            </>
-          )}
-        </div>
+          {!resultsLoading && !resultError && !resultReady ? (
+            <Panel title="Validation console" eyebrow="Stage 4 · Awaiting result">
+              <p className="empty" role="status" aria-live="polite">
+                {polledJob
+                  ? `Scenario ${polledJob.scenario} is ${polledJob.state.toLowerCase()}. Validation evidence will appear when the job completes.`
+                  : "Select a scenario job to load its validation evidence."}
+              </p>
+            </Panel>
+          ) : null}
+
+          {resultReady && scheduleData && resolvedReport && selectedRun && network ? (
+            <ResultDashboard
+              section="validate"
+              runId={selectedRun.id}
+              jobId={scheduleData.job_id}
+              scenario={scheduleData.scenario}
+              schedule={scheduleData}
+              report={resolvedReport}
+              network={network}
+              selection={selection}
+              onSelect={handleSelect}
+              onClearSelection={handleClearSelection}
+            />
+          ) : null}
+        </section>
+
+        <section
+          id="workflow-panel-explain"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-explain"
+          tabIndex={-1}
+          hidden={activeStage !== "explain"}
+          className="workflow-panel"
+        >
+          {resultReady && scheduleData && resolvedReport && selectedRun && network ? (
+            <ResultDashboard
+              section="explain"
+              runId={selectedRun.id}
+              jobId={scheduleData.job_id}
+              scenario={scheduleData.scenario}
+              schedule={scheduleData}
+              report={resolvedReport}
+              network={network}
+              selection={selection}
+              onSelect={handleSelect}
+              onClearSelection={handleClearSelection}
+            />
+          ) : null}
+        </section>
+
+        <section
+          id="workflow-panel-export"
+          role="tabpanel"
+          aria-labelledby="workflow-tab-export"
+          tabIndex={-1}
+          hidden={activeStage !== "export"}
+          className="workflow-panel"
+        >
+          {resultReady && scheduleData && resolvedReport && selectedRun && network ? (
+            <ResultDashboard
+              section="export"
+              runId={selectedRun.id}
+              jobId={scheduleData.job_id}
+              scenario={scheduleData.scenario}
+              schedule={scheduleData}
+              report={resolvedReport}
+              network={network}
+              selection={selection}
+              onSelect={handleSelect}
+              onClearSelection={handleClearSelection}
+            />
+          ) : null}
+        </section>
       </main>
 
       <footer className="footer">

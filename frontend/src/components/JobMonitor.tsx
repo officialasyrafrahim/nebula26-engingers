@@ -56,7 +56,7 @@ export default function JobMonitor({
 }: JobMonitorProps) {
   if (!job) {
     return (
-      <Panel title="Job monitor" eyebrow="Stage 4 · Validate" tone="default">
+      <Panel title="Job monitor" eyebrow="Stage 3 · Optimise" tone="default">
         <p className="empty">
           No scenario job tracked. Dispatch a scenario to watch its lifecycle.
         </p>
@@ -71,7 +71,7 @@ export default function JobMonitor({
   return (
     <Panel
       title={`Job monitor · ${job.scenario}`}
-      eyebrow={`Stage 4 · Validate · ${job.id.slice(0, 8)}`}
+      eyebrow={`Stage 3 · Optimise · ${job.id.slice(0, 8)}`}
       tone={job.state === "COMPLETED" ? "ok" : terminal ? "danger" : "default"}
       actions={
         <span className="gate-inline">
