@@ -214,3 +214,27 @@ class AuditLog(IdTimestampMixin, Base):
     entity_id: Mapped[str | None] = mapped_column(String, nullable=True)
     before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class CalendarVersion(IdTimestampMixin, Base):
+    """Immutable projection of one assured witness; publishing adds date bindings."""
+
+    __tablename__ = "calendar_versions"
+    __table_args__ = (
+        Index(
+            "uq_calendar_published",
+            "run_id",
+            "scenario",
+            unique=True,
+            sqlite_where=text("state = 'PUBLISHED'"),
+            postgresql_where=text("state = 'PUBLISHED'"),
+        ),
+    )
+
+    job_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenario_jobs.id"), unique=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("planning_runs.id"), index=True)
+    scenario: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String, default="DRAFT")
+    witness_hash: Mapped[str] = mapped_column(String)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    date_bindings: Mapped[dict] = mapped_column(JSON, default=dict)
