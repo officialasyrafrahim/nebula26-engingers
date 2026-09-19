@@ -4,6 +4,8 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Add what-if sandbox and deterministic schedule query panels to the result view.
+- Add an instance inspection CLI, Windows helpers and a repository hygiene audit.
 - Add fragility and what-if sandboxing plus a deterministic schedule query backend.
 - Add the disruption replanning panel to the validated result view.
 - Add a Playwright browser and responsive acceptance suite covering AT-15.
