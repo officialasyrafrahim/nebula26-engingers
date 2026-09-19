@@ -14,8 +14,12 @@ import type {
   PlanningRun,
   ReplanRead,
   ReplanRequest,
+  SandboxRead,
+  SandboxRequest,
   ScenarioJob,
   ScenarioJobCreate,
+  ScheduleQueryRequest,
+  ScheduleQueryResponse,
   ScheduleResponse,
   ValidatorReportRead,
 } from "./types";
@@ -198,6 +202,34 @@ export function getReplan(
   replanId: string,
 ): Promise<ReplanRead> {
   return request<ReplanRead>(`/runs/${runId}/replans/${replanId}`);
+}
+
+// Advisory only. A sandbox what-if re-solves on the server and returns baseline
+// against variant metrics. It never rewrites the source job's published CSVs.
+export function createSandbox(
+  runId: string,
+  jobId: string,
+  payload: SandboxRequest,
+): Promise<SandboxRead> {
+  return request<SandboxRead>(`/runs/${runId}/jobs/${jobId}/sandbox`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+// A deterministic, closed-grammar query. Unsupported shapes are rejected by the
+// server with HTTP 422; an answerable query carries its own citations.
+export function querySchedule(
+  runId: string,
+  jobId: string,
+  payload: ScheduleQueryRequest,
+): Promise<ScheduleQueryResponse> {
+  return request<ScheduleQueryResponse>(`/runs/${runId}/jobs/${jobId}/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export interface ExportDownload {

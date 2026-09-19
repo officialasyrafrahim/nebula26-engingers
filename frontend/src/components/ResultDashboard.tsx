@@ -7,6 +7,7 @@ import type { ScenarioCompareEntry } from "../lib/compare";
 import { capacityReadings, isAtCapacity, type ActivitySelection } from "../lib/schematic";
 import ActivityTimeline from "./ActivityTimeline";
 import AssurancePanel from "./AssurancePanel";
+import BonusArea from "./BonusArea";
 import ContractTable from "./ContractTable";
 import DownloadPanel from "./DownloadPanel";
 import EcloPanel from "./EcloPanel";
@@ -148,6 +149,13 @@ export default function ResultDashboard({
         explanations={schedule.explanations}
         selectedActivityId={selectedActivityId}
         onSelect={onSelect}
+      />
+
+      <BonusArea
+        runId={runId}
+        jobId={jobId}
+        scenario={scenario}
+        network={network}
       />
 
       {selection ? (

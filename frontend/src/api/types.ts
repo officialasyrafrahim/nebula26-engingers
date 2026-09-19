@@ -433,6 +433,101 @@ export interface ReplanRead {
   created_at: string;
 }
 
+// ------------------------------------------------------- what-if sandbox
+// Mirrors backend/app/domain/schemas.py SandboxRequest et al. The sandbox is
+// advisory and exploratory: it re-solves the source instance under a controlled
+// knob set and never rewrites the source job's published CSVs or validated
+// result.
+
+export interface SandboxRequest {
+  scenario?: Scenario | null;
+  supply?: Record<string, number>;
+  workfronts?: Record<string, number>;
+  horizon_extension_weeks?: number | null;
+  eclo_allowed?: boolean | null;
+  time_limit_seconds?: number | null;
+  seed?: number | null;
+  fragility_location_id?: string | null;
+  fragility_max_trials?: number;
+}
+
+export interface SandboxMetricSet {
+  overrun_days_total: number;
+  excess_access_nights_total: number;
+  eclo_nights_total: number;
+  access_nights_total: number;
+  score: number;
+}
+
+export interface SandboxOutcomeRead {
+  scenario: string;
+  feasible: boolean;
+  safe: boolean;
+  status: string;
+  metrics: SandboxMetricSet;
+  objective_breakdown: Record<string, unknown>;
+  infeasibility_reasons: string[];
+  witness: PhysicalCheckReport | null;
+  access: Record<string, unknown>[];
+  occupancy: Record<string, unknown>[];
+  contract_results: Record<string, unknown>[];
+}
+
+export interface SandboxFragility {
+  location_id: string;
+  base_supply: number;
+  feasible_floor: number | null;
+  breaking_new_supply: number | null;
+  smallest_supply_reduction: number | null;
+  trials: number;
+  bounded: boolean;
+  note: string;
+}
+
+export interface SandboxRead {
+  run_id: string;
+  job_id: string;
+  source_scenario: Scenario;
+  applied: Record<string, unknown>;
+  baseline: SandboxMetricSet;
+  variant: SandboxOutcomeRead;
+  delta: Record<string, number>;
+  fragility: SandboxFragility | null;
+}
+
+// ---------------------------------------------- deterministic schedule query
+// Mirrors backend/app/domain/schemas.py ScheduleQueryRequest/Response. The
+// grammar is closed and the answer is grounded in persisted evidence; an
+// unsupported shape is rejected with HTTP 422 and a well-formed query without
+// evidence is returned with answerable false.
+
+export type QueryKind =
+  | "why_moved"
+  | "downstream_risk"
+  | "capacity_check"
+  | "milestone_brief";
+
+export interface ScheduleQueryRequest {
+  query: string;
+}
+
+export interface ScheduleQueryCitation {
+  source: string;
+  fields: Record<string, unknown>;
+}
+
+export interface ScheduleQueryResponse {
+  run_id: string;
+  job_id: string;
+  scenario: Scenario;
+  query: string;
+  kind: string;
+  answerable: boolean;
+  answer: string;
+  evidence: Record<string, unknown>;
+  citations: ScheduleQueryCitation[];
+}
+
 export type HealthStatus = Record<string, unknown>;
 
 // --------------------------------------------------------- LTA DataMall context
