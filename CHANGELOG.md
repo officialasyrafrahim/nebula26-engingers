@@ -4,6 +4,8 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Add optional LTA DataMall advisory context, off by default with no egress without a key.
+- Add disruption impact assessment and minimal-churn replanning backend.
 - Build a witness-gated greedy incumbent so tight budgets still return a safe complete schedule.
 - Add Tonight controller mode, scenario comparison, embedded why evidence and network name mapping.
 - Harden hidden-instance parsing against malformed CSV, bad encoding and unsafe values.
