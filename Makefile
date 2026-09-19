@@ -4,8 +4,9 @@ VENV=$(BACKEND)/.venv
 PIP=$(VENV)/bin/pip
 PY=$(VENV)/bin/python
 COMPOSE=docker compose -f deploy/docker-compose.yml
+INSTANCE ?= data/public-instance
 
-.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-test web-build web-e2e features features-validate labels-dry-run labels-sync
+.PHONY: venv install dev worker test test-public-sample lint sample-validate public-answers public-answers-smoke validator-calibrate up down logs config web-install web-dev web-test web-build web-e2e features features-validate inspect-instance labels-dry-run labels-sync
 
 venv:
 	python3 -m venv $(VENV)
@@ -27,6 +28,11 @@ test-public-sample:
 
 sample-validate:
 	cd $(BACKEND) && .venv/bin/python -c "from app.modules.validator import validate_directories as v; r = v('../data/public-instance', '../data/submission-sample'); print('scenario=%s authority=%s source=%s feasible=%s workload_complete=%s ready=%s' % (r.scenario, r.authority, r.validator_source, r.feasible, r.workload_complete, r.ready_for_submission)); raise SystemExit(0 if r.ready_for_submission else 1)"
+
+# Read-only parse and compile report. Point INSTANCE at any eight-file directory.
+#   make inspect-instance INSTANCE=data/mapped/baseline
+inspect-instance:
+	$(PY) scripts/inspect_instance.py $(INSTANCE)
 
 # Full A/B/C answer generation for the public deliverables (longer budget).
 public-answers:

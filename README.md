@@ -226,10 +226,13 @@ make test                  # full pytest suite; native CP-SAT tests skip if orto
 make lint                  # ruff check app tests
 make sample-validate       # fallback-validate the published sample (non-zero on failure)
 make test-public-sample    # pytest the public-sample and adapter tests
+make inspect-instance      # read-only parse/compile report for an instance directory
 make public-answers-smoke  # solve and validate A/B/C with bounded CI budgets
 make public-answers        # generate full public answer directories and archives
 make web-build             # type-check and build the frontend (needs Node)
 ```
+
+See `docs/hygiene.md` for the ignore policy, the inspect CLI and the root-level Windows helpers (`setup-windows.cmd`, `start-windows.cmd`, `test-windows.cmd`).
 
 `.github/workflows/ci.yml` runs on every push and pull request. The backend job installs the dev and solver extras, runs `ruff check`, the pytest suite, published-sample validation and mandatory A/B/C smoke generation. The frontend job runs `npm ci` and `npm run build`.
 

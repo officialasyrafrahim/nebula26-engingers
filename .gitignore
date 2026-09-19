@@ -41,3 +41,12 @@ deploy/validator/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Local logs and per-user tooling
+*.log
+.direnv/
+.envrc
+
+# Nix build results (symlinks)
+result
+result-*
