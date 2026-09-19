@@ -33,6 +33,12 @@ def test_summary_cites_each_displacement_reason():
         predecessor_activity_id=None,
         predecessor_last_week=None,
         horizon_weeks=4,
+        displacement={
+            "displaced": True,
+            "planned_earliest_week": 1,
+            "binding_week": 1,
+            "binding_constraints": ["CAPACITY"],
+        },
     )
     assert "kept on a separate physical slot by a closure buffer" in summary
     assert "used a location at its capacity limit" in summary
@@ -40,6 +46,22 @@ def test_summary_cites_each_displacement_reason():
     assert "kept separate by an interchange closure" in summary
     assert "kept separate by Live opposite-bound mirroring" in summary
     assert "packed under possession-mix rules" in summary
+    assert "earliest start week 1 blocked at week 1 by capacity pressure" in summary
+
+
+def test_summary_never_claims_an_unproven_capacity_cause():
+    summary = _explanation_summary(
+        "A1",
+        ["CAPACITY", "WEEKLY_CAP", "WORKFRONT"],
+        first_week=3,
+        planned_start_week=1,
+        predecessor_activity_id=None,
+        predecessor_last_week=None,
+        horizon_weeks=4,
+    )
+    assert "capacity" not in summary.lower()
+    assert "weekly access limit" not in summary
+    assert "workfront limit" not in summary
 
 
 def test_summary_stays_generic_without_supporting_facts():
@@ -58,7 +80,7 @@ def test_summary_stays_generic_without_supporting_facts():
     )
 
 
-def test_schedule_explanations_carry_displacement_evidence(
+def test_schedule_explanations_withhold_unsupported_span_facts(
     client,
     worker_session,
     minimal_instance_files,
@@ -86,10 +108,13 @@ def test_schedule_explanations_carry_displacement_evidence(
     evidence = item["evidence"]
     assert evidence["access_type"] == "C"
     assert evidence["buffer_sectors"] == 0
-    assert evidence["opposite_bound_required"] is False
     assert evidence["closure_location_count"] >= 1
-    assert "mirrored_location_count" in evidence
-    assert evidence["interchange_location_count"] == 0
+
+    # A1 carries no mirror or interchange spans of its own, so those codes must
+    # degrade rather than report a false or zero fact as support.
+    assert "opposite_bound_required" not in evidence
+    assert "mirrored_location_count" not in evidence
+    assert "interchange_location_count" not in evidence
 
     # A single-activity schedule at capacity 4 cannot justify capacity pressure
     # or co-sharing, so the read model must not claim either.

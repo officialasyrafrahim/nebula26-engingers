@@ -24,6 +24,7 @@ CHECK_NAMES = [
     "closure_simultaneity",
     "capacity_slots",
     "workfront_slots",
+    "physical_slot_universe",
     "witness_available",
 ]
 

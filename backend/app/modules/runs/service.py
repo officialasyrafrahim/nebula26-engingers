@@ -36,6 +36,8 @@ from app.modules.export import (
 from app.modules.instance import INSTANCE_FILES, parse_mapping
 from app.modules.instance.service import build_planning_instance
 from app.modules.runs.queue import get_queue
+from app.modules.solver import reasons
+from app.modules.solver.possession import truly_co_sharable
 
 ACTIVE_STATES = (JobState.QUEUED, JobState.RUNNING, JobState.VALIDATING)
 TERMINAL_STATES = (
@@ -268,7 +270,19 @@ def create_job(
             ),
         ) from exc
     db.refresh(job)
-    get_queue().enqueue(job.id)
+    try:
+        get_queue().enqueue(job.id)
+    except Exception as exc:
+        # The database is the authority for job state. A transport failure must
+        # not leave the job looking queued forever.
+        job.state = JobState.FAILED
+        job.error = f"could not enqueue job: {exc}"
+        job.finished_at = utcnow()
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail=f"could not enqueue scenario job {job.id}: {exc}",
+        ) from exc
     return job
 
 
@@ -322,6 +336,20 @@ def cancel_job(db: Session, run_id, job_id, *, actor: str | None = None) -> Scen
     return job
 
 
+def _binding_label(code: str) -> str:
+    """Human phrase for a constraint that rejected an earlier week."""
+
+    return {
+        "CAPACITY": "capacity pressure",
+        "WEEKLY_CAP": "the contract weekly access cap",
+        "WORKFRONT": "the contract workfront limit",
+        "BUFFER_CLOSURE": "a closure buffer",
+        "LIVE_MIRROR": "Live opposite-bound mirroring",
+        "INTERCHANGE": "an interchange closure",
+        "POSSESSION_MIX": "possession-mix rules",
+    }.get(code, code)
+
+
 def _explanation_summary(
     activity_id: str,
     codes: list[str],
@@ -330,8 +358,15 @@ def _explanation_summary(
     predecessor_activity_id: str | None,
     predecessor_last_week: int | None,
     horizon_weeks: int,
+    displacement: dict | None = None,
 ) -> str:
-    """Render deterministic prose from the persisted evidence only."""
+    """Render deterministic prose from the persisted evidence only.
+
+    A cause is only claimed when the persisted displacement evidence names the
+    earlier rejected week and the binding constraint. Capacity, weekly-cap and
+    workfront phrases are withheld otherwise, so the prose never states a cause
+    the schedule cannot support.
+    """
 
     parts = [f"first access week {first_week}"]
     if planned_start_week is not None:
@@ -361,15 +396,74 @@ def _explanation_summary(
         parts.append("packed under possession-mix rules")
     if "CO_SHARE_PACKED" in codes:
         parts.append("packed into a co-shared possession")
-    if "CAPACITY" in codes:
+    binding = set((displacement or {}).get("binding_constraints") or ())
+    if "CAPACITY" in codes and "CAPACITY" in binding:
         parts.append("used a location at its capacity limit")
-    if "WEEKLY_CAP" in codes:
+    if "WEEKLY_CAP" in codes and "WEEKLY_CAP" in binding:
         parts.append("used the contract weekly access limit")
-    if "WORKFRONT" in codes:
+    if "WORKFRONT" in codes and "WORKFRONT" in binding:
         parts.append("used the contract workfront limit")
     if "PRIORITY_OVERRUN" in codes:
         parts.append("contributed to priority-weighted overrun")
+    if displacement and displacement.get("displaced"):
+        rejected_week = displacement.get("binding_week")
+        labels = [
+            _binding_label(code)
+            for code in displacement.get("binding_constraints", [])
+        ]
+        if rejected_week is not None and labels:
+            parts.append(
+                f"earliest start week {displacement.get('planned_earliest_week')} "
+                f"blocked at week {rejected_week} by " + " and ".join(labels)
+            )
     return f"{activity_id} " + "; ".join(parts) + "."
+
+
+def _possession_conflict_facts(
+    compiled,
+    weeks_by_activity: dict[str, set[int]],
+) -> dict[str, list[dict[str, object]]]:
+    """Counterpart facts for each pair-level possession code.
+
+    The closure codes are assigned to both activities in a conflict, so an
+    activity affected by another's Live mirror or interchange can have empty
+    spans of its own. Recording the counterpart's facts lets the explanation
+    cite the conflict without presenting the own-activity zeros as support.
+    """
+
+    facts: dict[str, list[dict[str, object]]] = {}
+    for (left_id, right_id), conflict in sorted(
+        compiled.physical_possession.closure_conflicts.items()
+    ):
+        if truly_co_sharable(compiled, left_id, right_id):
+            continue
+        if not (
+            weeks_by_activity.get(left_id, set())
+            & weeks_by_activity.get(right_id, set())
+        ):
+            continue
+        code = reasons.CLOSURE_RULE_CODES.get(conflict.rule)
+        if code is None:
+            continue
+        for own_id, other_id in ((left_id, right_id), (right_id, left_id)):
+            other = compiled.activities[other_id]
+            facts.setdefault(own_id, []).append(
+                {
+                    "code": code,
+                    "counterpart_activity_id": other_id,
+                    "counterpart_access_type": other.access_type,
+                    "counterpart_opposite_bound_required": other.opposite_bound_required,
+                    "counterpart_mirrored_location_count": len(
+                        other.mirrored_locations
+                    ),
+                    "counterpart_interchange_location_count": len(
+                        other.interchange_locations
+                    ),
+                    "counterpart_closure_location_count": len(other.closure_locations),
+                    "conflict_locations": sorted(conflict.locations),
+                }
+            )
+    return facts
 
 
 def _activity_evidence(
@@ -377,14 +471,17 @@ def _activity_evidence(
     activity,
     occupancy_rows: list,
     group_members: dict[tuple[str, int, str], set[str]],
-    groups_at_location_week: dict[tuple[str, int], set[str]],
     compiled,
+    conflict_facts: list[dict[str, object]] | None = None,
+    displacement: dict | None = None,
 ) -> dict[str, object]:
     """Structural facts the reason codes justify, or nothing when unproven.
 
-    Every value is derived from persisted schedule rows and the recompiled
-    instance. Codes with no derivable fact add no keys, so the panel degrades to
-    the bare reason code instead of inventing a cause.
+    Every value is derived from persisted schedule rows, the persisted
+    displacement evidence and the recompiled instance. Codes with no derivable
+    fact add no keys, so the panel degrades to the bare reason code instead of
+    inventing a cause. Own spans are only reported when they actually support the
+    code; pair-level conflicts carry the counterpart's facts instead.
     """
 
     evidence: dict[str, object] = {}
@@ -393,21 +490,13 @@ def _activity_evidence(
     ):
         evidence["access_type"] = activity.access_type
 
-    if "CAPACITY" in codes and occupancy_rows:
-        at_limit = []
-        for location_id, week, _ in sorted(
-            {(row.location_id, row.week, row.co_share_group) for row in occupancy_rows}
-        ):
-            used = len(groups_at_location_week.get((location_id, week), ()))
-            capacity = compiled.location_capacities.get(location_id, 0)
-            if capacity and used >= capacity:
-                at_limit.append((location_id, week, used, capacity))
-        if at_limit:
-            location_id, week, used, capacity = at_limit[0]
-            evidence["capacity_location"] = location_id
-            evidence["capacity_week"] = week
-            evidence["capacity_used"] = used
-            evidence["capacity_limit"] = capacity
+    if "CAPACITY" in codes and displacement and displacement.get("displaced"):
+        detail = (displacement.get("binding_details") or {}).get("CAPACITY")
+        if detail:
+            evidence["capacity_location"] = detail.get("location_id")
+            evidence["capacity_week"] = detail.get("week")
+            evidence["capacity_used"] = detail.get("used")
+            evidence["capacity_limit"] = detail.get("capacity")
 
     if "CO_SHARE_PACKED" in codes:
         shared: list[tuple[str, tuple[str, ...]]] = []
@@ -430,14 +519,30 @@ def _activity_evidence(
             evidence["mix_groups"] = groups
 
     if activity is not None:
-        if "BUFFER_CLOSURE" in codes:
+        if "BUFFER_CLOSURE" in codes and activity.closure_locations:
             evidence["buffer_sectors"] = activity.buffer_sectors
             evidence["closure_location_count"] = len(activity.closure_locations)
-        if "LIVE_MIRROR" in codes:
+        if "LIVE_MIRROR" in codes and activity.mirrored_locations:
             evidence["opposite_bound_required"] = activity.opposite_bound_required
             evidence["mirrored_location_count"] = len(activity.mirrored_locations)
-        if "INTERCHANGE" in codes:
+        if "INTERCHANGE" in codes and activity.interchange_locations:
             evidence["interchange_location_count"] = len(activity.interchange_locations)
+
+    pair_facts = [fact for fact in (conflict_facts or []) if fact.get("code") in codes]
+    if pair_facts:
+        evidence["possession_conflicts"] = pair_facts
+
+    if displacement is not None:
+        evidence["displaced"] = bool(displacement.get("displaced"))
+        evidence["planned_earliest_week"] = displacement.get("planned_earliest_week")
+        evidence["actual_first_week"] = displacement.get("actual_first_week")
+        if displacement.get("displaced"):
+            evidence["rejected_weeks"] = displacement.get("rejected_weeks", [])
+            evidence["binding_week"] = displacement.get("binding_week")
+            evidence["binding_constraints"] = displacement.get(
+                "binding_constraints", []
+            )
+            evidence["binding_details"] = displacement.get("binding_details", {})
 
     return evidence
 
@@ -461,15 +566,11 @@ def _build_explanations(
 
     occupancy_by_activity: dict[str, list] = {}
     group_members: dict[tuple[str, int, str], set[str]] = {}
-    groups_at_location_week: dict[tuple[str, int], set[str]] = {}
     for row in occupancy:
         occupancy_by_activity.setdefault(row.activity_id, []).append(row)
         group_members.setdefault(
             (row.location_id, row.week, row.co_share_group), set()
         ).add(row.activity_id)
-        groups_at_location_week.setdefault((row.location_id, row.week), set()).add(
-            row.co_share_group
-        )
 
     if not access_by_activity:
         return []
@@ -479,6 +580,14 @@ def _build_explanations(
         return []
     compiled = compile_instance(instance_for_run(run))
     horizon_weeks = compiled.instance.horizon_weeks
+    weeks_by_activity = {
+        activity_id: {row.week for row in rows}
+        for activity_id, rows in access_by_activity.items()
+    }
+    conflict_facts = _possession_conflict_facts(compiled, weeks_by_activity)
+    displacement_map = (
+        result.get("objective_breakdown") or {}
+    ).get("displacement_evidence") or {}
 
     explanations: list[ActivityExplanation] = []
     for activity_id in sorted(access_by_activity):
@@ -493,6 +602,7 @@ def _build_explanations(
                 predecessor_last_week = max(row.week for row in predecessor_rows)
         planned_start_week = max(1, activity.planned_start_week) if activity else None
         codes = sorted(set(reasons_by_activity.get(activity_id, [])))
+        displacement = displacement_map.get(activity_id)
         evidence: dict[str, object] = {
             "first_week": first_week,
             "planned_start_week": planned_start_week,
@@ -507,8 +617,9 @@ def _build_explanations(
                 activity,
                 occupancy_by_activity.get(activity_id, []),
                 group_members,
-                groups_at_location_week,
                 compiled,
+                conflict_facts.get(activity_id, []),
+                displacement,
             )
         )
         explanations.append(
@@ -523,6 +634,7 @@ def _build_explanations(
                     predecessor_id,
                     predecessor_last_week,
                     horizon_weeks,
+                    displacement,
                 ),
                 evidence=evidence,
             )

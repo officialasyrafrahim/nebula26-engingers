@@ -7,9 +7,10 @@ re-checks a solved schedule directly against that witness using only the compile
 instance, the scenario policy and the rows. It never imports a solver module, so a
 solver regression cannot make its own output pass by construction.
 
-The five checks are reported independently, and ``passed`` is the conjunction of
+The six checks are reported independently, and ``passed`` is the conjunction of
 all of them. ``witness_available`` fails closed on witness-free input so a plan
-missing physical slots can never silently pass.
+missing physical slots can never silently pass, and ``physical_slot_universe``
+fails closed on any slot outside the shared seven-night universe.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.rail.compiled import CompiledInstance
+from app.domain.rail.nights import PHYSICAL_NIGHT_SLOTS, in_physical_night_universe
 from app.modules.compiler.mixes import legal_access_mix
 from app.modules.compiler.policy import ScenarioPolicy
 
@@ -70,6 +72,8 @@ class _WitnessIndex:
     access_rows: int
     missing_rows: int
     missing_activities: set[str]
+    out_of_universe_rows: int
+    out_of_universe_activities: set[str]
 
 
 def _index(access_rows: Sequence[Any], occupancy_rows: Sequence[Any]) -> _WitnessIndex:
@@ -77,8 +81,10 @@ def _index(access_rows: Sequence[Any], occupancy_rows: Sequence[Any]) -> _Witnes
 
     slots_by_activity_week: dict[tuple[str, int], set[int]] = defaultdict(set)
     missing_activities: set[str] = set()
+    out_of_universe_activities: set[str] = set()
     access_count = 0
     missing_count = 0
+    out_of_universe_count = 0
 
     for row in access_rows:
         access_count += 1
@@ -91,7 +97,15 @@ def _index(access_rows: Sequence[Any], occupancy_rows: Sequence[Any]) -> _Witnes
             missing_count += 1
             missing_activities.add(str(activity_id))
             continue
-        slots_by_activity_week[(str(activity_id), int(week))].add(int(physical_night))
+        try:
+            slot = int(physical_night)
+        except (TypeError, ValueError):
+            slot = None
+        if slot is None or not in_physical_night_universe(slot):
+            out_of_universe_count += 1
+            out_of_universe_activities.add(str(activity_id))
+            continue
+        slots_by_activity_week[(str(activity_id), int(week))].add(slot)
 
     locations_by_activity_week: dict[tuple[str, int], set[str]] = defaultdict(set)
     groups: dict[tuple[str, int, str], str | None] = {}
@@ -126,6 +140,8 @@ def _index(access_rows: Sequence[Any], occupancy_rows: Sequence[Any]) -> _Witnes
         access_rows=access_count,
         missing_rows=missing_count,
         missing_activities=missing_activities,
+        out_of_universe_rows=out_of_universe_count,
+        out_of_universe_activities=out_of_universe_activities,
     )
 
 
@@ -328,6 +344,22 @@ def _witness_available(index: _WitnessIndex) -> PhysicalCheck:
     return PhysicalCheck(name="witness_available", passed=True, detail=detail)
 
 
+def _physical_slot_universe(index: _WitnessIndex) -> PhysicalCheck:
+    """Every witnessed slot must be one of the shared seven physical nights."""
+
+    detail: dict[str, Any] = {
+        "allowed_slots": list(PHYSICAL_NIGHT_SLOTS),
+        "rows_outside_universe": index.out_of_universe_rows,
+        "activities_outside_universe": sorted(index.out_of_universe_activities),
+    }
+    if index.out_of_universe_rows:
+        detail["reason"] = "some access rows carry a physical_night outside 1..7"
+        return PhysicalCheck(
+            name="physical_slot_universe", passed=False, detail=detail
+        )
+    return PhysicalCheck(name="physical_slot_universe", passed=True, detail=detail)
+
+
 def check_physical_witness(
     compiled: CompiledInstance,
     policy: ScenarioPolicy,
@@ -348,6 +380,7 @@ def check_physical_witness(
         _closure_simultaneity(compiled, index),
         _capacity_slots(compiled, policy, index),
         _workfront_slots(compiled, index),
+        _physical_slot_universe(index),
         _witness_available(index),
     ]
     return PhysicalWitnessReport(

@@ -2,8 +2,8 @@
 
 These tests exercise the real parser and compiler against every generated
 profile, prove byte-for-byte determinism for a fixed seed, check the public
-LTA-to-ALP/BET mapping, and run one bounded baseline solve when CP-SAT is
-available.
+LTA-to-ALP/BET presentation mapping, and run bounded solves for the profiles
+documented as solvable when CP-SAT is available.
 """
 
 from __future__ import annotations
@@ -26,6 +26,16 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 PROFILES = ("baseline", "congestion", "disruption")
 EXPECTED_HORIZON_START = "2027-01-04"
 EXPECTED_HORIZON_WEEKS = 30
+# Enforced solvability: only combinations the mapped README documents as
+# solvable. The solver spends about half the budget searching, so 30 s is a
+# comfortable bound for combinations that converge on the reference machine.
+BOUNDED_SOLVE_SECONDS = 30
+SOLVABLE_COMBINATIONS = (
+    ("baseline", "A"),
+    ("baseline", "B"),
+    ("disruption", "A"),
+    ("disruption", "B"),
+)
 H01_H02_LOCATIONS = (
     "SEC:ALP:H01_H02:EB",
     "SEC:ALP:H01_H02:WB",
@@ -213,19 +223,51 @@ def test_real_topology_mapping(generator):
     ]
 
 
-@pytest.mark.skipif(
-    not cp_sat_available(), reason="native OR-Tools CP-SAT runtime is unavailable"
-)
-def test_baseline_bounded_solve(generator, tmp_path):
-    _generate(generator, "baseline", tmp_path, seed=42)
-    compiled = compile_instance(build_planning_instance(parse_directory(tmp_path)))
+def test_interchange_sectors_are_per_line_not_shared(generator, tmp_path):
+    """H01_H02 is two tunnels, so both mapped sectors carry is_shared=0.
 
-    result = solve(compiled, "A", time_limit_seconds=30, seed=42)
-    if not result.feasible:
-        pytest.skip(f"baseline mapped solve did not finish: {result.status}")
+    ``PS1_README`` says the interchange is physically two adjacent tunnels with
+    independent line capacity, and the public instance sets ``is_shared=0`` for
+    both. The mapped topology must not mark either as a shared tunnel.
+    """
 
+    rows = {row[0]: row for row in generator.net.sector_rows()}
+    assert rows["SEC:ALP:H01_H02"][5] == 0
+    assert rows["SEC:BET:H01_H02"][5] == 0
+
+    _generate(generator, "baseline", tmp_path)
+    parsed = parse_directory(tmp_path)
+    shared = {
+        sector.sector_id: sector.is_shared for sector in parsed.sectors
+    }
+    assert shared["SEC:ALP:H01_H02"] is False
+    assert shared["SEC:BET:H01_H02"] is False
+
+
+def _assert_full_workload(compiled, result) -> None:
     totals: dict[str, int] = {}
     for row in result.access:
         totals[row.activity_id] = totals.get(row.activity_id, 0) + (3 if row.eclo else 2)
     for activity_id, activity in compiled.activities.items():
         assert totals.get(activity_id, 0) >= 2 * activity.total_accesses
+
+
+@pytest.mark.skipif(
+    not cp_sat_available(), reason="native OR-Tools CP-SAT runtime is unavailable"
+)
+@pytest.mark.parametrize("profile,scenario", SOLVABLE_COMBINATIONS)
+def test_documented_combination_solves(generator, profile, scenario, tmp_path):
+    """The profiles documented as solvable must solve, not skip.
+
+    The bounded budget is a search bound, not a claim of infeasibility. A
+    combination this test covers must return a feasible, complete schedule.
+    """
+
+    _generate(generator, profile, tmp_path, seed=42)
+    compiled = compile_instance(build_planning_instance(parse_directory(tmp_path)))
+
+    result = solve(
+        compiled, scenario, time_limit_seconds=BOUNDED_SOLVE_SECONDS, seed=42
+    )
+    assert result.feasible, f"{profile} {scenario} returned {result.status}"
+    _assert_full_workload(compiled, result)

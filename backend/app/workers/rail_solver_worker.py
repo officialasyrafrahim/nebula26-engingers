@@ -12,6 +12,7 @@ Entry point: ``python -m app.workers.rail_solver_worker``.
 from __future__ import annotations
 
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, initialize_database
 from app.domain.enums import JobState
 from app.domain.models import (
     ContractResultRow,
@@ -94,6 +95,35 @@ def _set_terminal(
     job.error = error
     job.finished_at = utcnow()
     session.commit()
+
+
+def _fail_safely(session: Session, job_id: uuid.UUID, error: str) -> None:
+    """Mark a job failed without letting a broken session kill the worker loop."""
+
+    try:
+        _set_terminal(session, job_id, JobState.FAILED, error=error)
+    except Exception:
+        # The database rejected the terminal write too. Roll the session back so
+        # the next iteration starts clean; the loop must survive either way.
+        try:
+            session.rollback()
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+
+def _terminal_state_for_solver(status: str) -> JobState:
+    """Map a non-feasible solver status onto a terminal job state.
+
+    Only a proven ``INFEASIBLE`` is reported as infeasible. A model or solver
+    error status is a failure, not a proof, so it must never masquerade as
+    infeasible. ``UNKNOWN`` is an unfinished search, reported as timed out.
+    """
+
+    if status == "INFEASIBLE":
+        return JobState.INFEASIBLE
+    if status == "UNKNOWN":
+        return JobState.TIMED_OUT
+    return JobState.FAILED
 
 
 def _persist_success(
@@ -225,32 +255,37 @@ def process_next_job(timeout: float | None = 1.0) -> bool:
             _set_terminal(session, job_id, JobState.FAILED, error=str(exc))
             return True
         except Exception as exc:  # pragma: no cover - defensive
-            _set_terminal(session, job_id, JobState.FAILED, error=str(exc))
+            _fail_safely(session, job_id, str(exc))
             return True
 
         if not solver_result.feasible:
-            state = (
-                JobState.TIMED_OUT
-                if solver_result.status == "UNKNOWN"
-                else JobState.INFEASIBLE
-            )
+            terminal = _terminal_state_for_solver(solver_result.status)
             _set_terminal(
                 session,
                 job_id,
-                state,
+                terminal,
                 result={
                     "status": solver_result.status,
                     "infeasibility_reasons": list(solver_result.infeasibility_reasons),
                 },
-                error=None if state == JobState.INFEASIBLE else "solver timed out",
+                error=None
+                if terminal == JobState.INFEASIBLE
+                else (
+                    "solver timed out"
+                    if terminal == JobState.TIMED_OUT
+                    else f"solver returned {solver_result.status}"
+                ),
             )
             return True
 
-        bundle = bundle_from_solver_result(solver_result)
+        # A cancel requested while the solver ran must be honoured before any
+        # further work (validation, persistence).
         session.refresh(job)
         if job.cancel_requested:
             _set_terminal(session, job_id, JobState.CANCELLED)
             return True
+
+        bundle = bundle_from_solver_result(solver_result)
 
         job.state = JobState.VALIDATING
         session.commit()
@@ -258,7 +293,7 @@ def process_next_job(timeout: float | None = 1.0) -> bool:
         try:
             report = _validate(run, compiled, bundle, job.scenario.value)
         except Exception as exc:  # pragma: no cover - defensive
-            _set_terminal(session, job_id, JobState.FAILED, error=str(exc))
+            _fail_safely(session, job_id, str(exc))
             return True
 
         session.refresh(job)
@@ -272,19 +307,33 @@ def process_next_job(timeout: float | None = 1.0) -> bool:
             solver_result.access,
             solver_result.occupancy,
         )
-        _persist_success(session, job, solver_result, report, physical_checks)
+        try:
+            _persist_success(session, job, solver_result, report, physical_checks)
+        except Exception as exc:  # pragma: no cover - defensive
+            # A persistence failure must not leave the job RUNNING, and must not
+            # kill the worker loop.
+            _fail_safely(session, job_id, f"could not persist result: {exc}")
         return True
     finally:
         session.close()
 
 
 def run_worker() -> None:
-    """Run the worker loop until interrupted."""
+    """Run the worker loop until interrupted.
+
+    A standalone worker owns its own schema bootstrap: the additive
+    ``physical_night`` column is applied before the first job is claimed, not
+    only when the API process happens to start first.
+    """
 
     settings = get_settings()
+    initialize_database()
     try:
         while True:
-            process_next_job(timeout=settings.worker_poll_seconds)
+            try:
+                process_next_job(timeout=settings.worker_poll_seconds)
+            except Exception:  # pragma: no cover - defensive worker guard
+                time.sleep(0.5)
     except KeyboardInterrupt:
         return
 

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.rail.compiled import CompiledInstance
 from app.domain.rail.instance_model import planned_start_week
+from app.modules.compiler.mixes import legal_access_mix
 from app.modules.compiler.policy import ScenarioPolicy, get_policy
 from app.modules.solver import reasons
 from app.modules.solver.constraints import (
@@ -46,6 +47,20 @@ from app.modules.solver.results import (
 from app.modules.solver.variables import SolverVariables, build_variables
 
 Scenario = Literal["A", "B", "C"]
+
+# Reason codes a genuine earlier-week blockage can earn. POSSESSION_MIX is
+# deliberately absent because it may only be claimed by work that shares a
+# co_share_group, which a rejected-week mix failure does not establish.
+_DISPLACEMENT_REASON_CODES = frozenset(
+    {
+        reasons.CAPACITY,
+        reasons.WEEKLY_CAP,
+        reasons.WORKFRONT,
+        reasons.BUFFER_CLOSURE,
+        reasons.LIVE_MIRROR,
+        reasons.INTERCHANGE,
+    }
+)
 
 
 class RailPlanRequest(BaseModel):
@@ -138,19 +153,24 @@ def _solve(
     with a larger horizon until either a complete incumbent is found, a safe
     completion bound is reached, or the overall time budget is spent.
 
-    Flexible-date scenarios (A/C) grow to :func:`completion_bound`. If that bound
-    is reached without a solution the result is reported as ``UNKNOWN`` rather
-    than proven infeasibility. Scenario B keeps its hard planned completion, so
-    growing cannot help and a proven infeasibility is returned immediately.
+    Flexible-date scenarios (A/C) grow to :func:`completion_bound`. An
+    ``INFEASIBLE`` result is never a proof for them, so it is reported as
+    ``UNKNOWN``. Scenario B keeps its hard planned completion, so growing cannot
+    help and a proven infeasibility is returned immediately.
 
     A caller that sets ``horizon_extension_weeks`` to zero has explicitly fixed
-    the horizon, so adaptive growth is disabled for that call.
+    the horizon, so adaptive growth is disabled for that call. Congestion is
+    still not turned into proven infeasibility for a flexible-date scenario.
+
+    A timed-out (``UNKNOWN``) attempt does not abandon the remaining budget: as
+    long as time and the bound allow, the horizon is expanded and solved again.
     """
 
     cp = load_cp_model()
     initial_weeks = resolve_total_weeks(compiled, horizon_extension_weeks)
     if horizon_extension_weeks <= 0:
-        return _attempt(cp, compiled, policy, initial_weeks, time_limit_seconds, seed)
+        last = _attempt(cp, compiled, policy, initial_weeks, time_limit_seconds, seed)
+        return _finalize_flexible(last, policy, initial_weeks)
 
     growth_step = max(1, horizon_extension_weeks)
     if policy.planned_completion_hard:
@@ -171,17 +191,23 @@ def _solve(
             return last
         if policy.planned_completion_hard and last.status == "INFEASIBLE":
             return last
-        # A timeout means the model was too hard for the slice, not that the
-        # horizon was too small. A larger model is harder still, so stop and
-        # report the unfinished attempt rather than burning the budget.
-        if last.status != "INFEASIBLE":
-            break
+        # A congested slice is not a proof for a flexible-date scenario, and a
+        # timed-out slice still has budget left. Both cases grow the horizon
+        # while the bound and the clock allow it.
         if horizon >= bound_weeks or deadline - time.monotonic() <= 0.01:
             break
         horizon = min(bound_weeks, horizon + growth_step)
         growth_step *= 2
 
     assert last is not None
+    return _finalize_flexible(last, policy, bound_weeks)
+
+
+def _finalize_flexible(
+    last: SolverResult, policy: ScenarioPolicy, bound_weeks: int
+) -> SolverResult:
+    """Relabel a flexible-date infeasibility as an unfinished search."""
+
     if last.status == "INFEASIBLE" and not policy.planned_completion_hard:
         # A flexible-date schedule exists by the safe bound, so an INFEASIBLE at
         # the implementation bound is not a proof. Report it as unfinished.
@@ -318,6 +344,13 @@ def _extract_result(
     breakdown = _objective_breakdown(
         compiled, policy, variables, solver, access_rows, occupancy_rows, contract_results
     )
+    binding_reasons, displacement_evidence = _binding_reasons(
+        compiled, variables, access_weeks, occupancy_rows, policy, access_rows
+    )
+    # Displacement evidence rides on the persisted objective breakdown. It is a
+    # dict of plain facts (weeks and constraint details) so the read model can
+    # rebuild the explanation after a worker restart.
+    breakdown["displacement_evidence"] = displacement_evidence
     horizon_used = max((row.week for row in access_rows), default=0)
 
     return SolverResult(
@@ -333,9 +366,7 @@ def _extract_result(
             for result in contract_results
         },
         objective_breakdown=breakdown,
-        binding_reasons=_binding_reasons(
-            compiled, variables, access_weeks, occupancy_rows, policy
-        ),
+        binding_reasons=binding_reasons,
     )
 
 
@@ -495,34 +526,223 @@ def _objective_breakdown(
     }
 
 
+def _displacement_analysis(
+    compiled: CompiledInstance,
+    variables: SolverVariables,
+    access_rows: list[AccessPlacement],
+    access_weeks: dict[str, list[tuple[int, int, bool]]],
+) -> tuple[dict[str, set[str]], dict[str, dict[str, Any]]]:
+    """Prove, per activity, which constraint displaced its first access later.
+
+    The comparison is between the earliest week the activity's own planned start
+    and predecessor allow and the week it was actually placed. Every intervening
+    week is tested for a single admissible access given every other activity's
+    actual placement. A week is admissible when at least one physical night can
+    host the access without breaching closure separation, the contract workfront
+    cap, the contract weekly cap, legal possession mix or location capacity.
+
+    When every earlier week is blocked, the activity was genuinely displaced.
+    The returned evidence names the earliest rejected week and the constraints
+    that blocked it, so the reason codes cite a real gap rather than a limit the
+    chosen placement merely happened to touch. When any earlier week admits the
+    access, no displacement is claimed.
+    """
+
+    physical_by_activity_week: dict[tuple[str, int], set[int]] = defaultdict(set)
+    contract_week_nights: dict[tuple[str, int], set[int]] = defaultdict(set)
+    contract_night_activities: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    location_night_members: dict[tuple[str, int, int], set[str]] = defaultdict(set)
+    location_week_nights: dict[tuple[str, int], set[int]] = defaultdict(set)
+    weeks_by_activity: dict[str, list[int]] = defaultdict(list)
+
+    for row in access_rows:
+        activity = compiled.activities.get(row.activity_id)
+        if activity is None or row.physical_night is None:
+            continue
+        contract = activity.contract_number
+        physical_by_activity_week[(row.activity_id, row.week)].add(row.physical_night)
+        contract_week_nights[(contract, row.week)].add(row.physical_night)
+        contract_night_activities[(contract, row.week, row.physical_night)].add(
+            row.activity_id
+        )
+        for location_id in dict.fromkeys(activity.occupied_locations):
+            location_night_members[
+                (location_id, row.week, row.physical_night)
+            ].add(row.activity_id)
+            location_week_nights[(location_id, row.week)].add(row.physical_night)
+
+    for activity_id, accesses in access_weeks.items():
+        weeks_by_activity[activity_id] = sorted({week for week, _, _ in accesses})
+
+    conflict_partners: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for (left_id, right_id), conflict in sorted(
+        compiled.physical_possession.closure_conflicts.items()
+    ):
+        if truly_co_sharable(compiled, left_id, right_id):
+            continue
+        code = reasons.CLOSURE_RULE_CODES.get(conflict.rule)
+        if code is None:
+            continue
+        conflict_partners[left_id].append((right_id, code))
+        conflict_partners[right_id].append((left_id, code))
+
+    def _blockers(activity_id: str, week: int) -> dict[str, dict[str, Any]]:
+        """First blocking detail per constraint for one candidate access.
+
+        Returns an empty mapping when some physical night admits the access.
+        """
+
+        activity = compiled.activities[activity_id]
+        contract = activity.contract_number
+        capacity_by_location = compiled.location_capacities
+        blocked: dict[str, dict[str, Any]] = {}
+        for night in variables.physical_nights:
+            night_blocked: dict[str, dict[str, Any]] = {}
+            for partner_id, code in conflict_partners.get(activity_id, ()):
+                if night in physical_by_activity_week.get((partner_id, week), set()):
+                    night_blocked.setdefault(
+                        code,
+                        {
+                            "week": week,
+                            "night": night,
+                            "counterpart_activity_id": partner_id,
+                        },
+                    )
+            if night_blocked:
+                for code, detail in night_blocked.items():
+                    blocked.setdefault(code, detail)
+                continue
+            if (
+                len(contract_night_activities.get((contract, week, night), set()))
+                >= compiled.contract_workfronts[contract]
+            ):
+                night_blocked[reasons.WORKFRONT] = {
+                    "week": week,
+                    "night": night,
+                    "used": len(
+                        contract_night_activities.get((contract, week, night), set())
+                    ),
+                    "limit": compiled.contract_workfronts[contract],
+                }
+            used_nights = contract_week_nights.get((contract, week), set())
+            if (
+                night not in used_nights
+                and len(used_nights) >= compiled.contract_weekly_caps[contract]
+            ):
+                night_blocked[reasons.WEEKLY_CAP] = {
+                    "week": week,
+                    "used": len(used_nights),
+                    "limit": compiled.contract_weekly_caps[contract],
+                }
+            for location_id in dict.fromkeys(activity.occupied_locations):
+                members = location_night_members.get((location_id, week, night))
+                if members:
+                    types = [compiled.activities[member].access_type for member in members]
+                    types.append(activity.access_type)
+                    if not legal_access_mix(types):
+                        night_blocked[reasons.POSSESSION_MIX] = {
+                            "week": week,
+                            "night": night,
+                            "location_id": location_id,
+                            "occupied_by": sorted(members),
+                        }
+                elif (
+                    len(location_week_nights.get((location_id, week), set()))
+                    >= capacity_by_location.get(location_id, 0)
+                ):
+                    night_blocked[reasons.CAPACITY] = {
+                        "week": week,
+                        "night": night,
+                        "location_id": location_id,
+                        "used": len(location_week_nights.get((location_id, week), set())),
+                        "capacity": capacity_by_location.get(location_id, 0),
+                    }
+            if not night_blocked:
+                return {}
+            for code, detail in night_blocked.items():
+                blocked.setdefault(code, detail)
+        return blocked
+
+    codes_per_activity: dict[str, set[str]] = defaultdict(set)
+    evidence: dict[str, dict[str, Any]] = {}
+    for activity_id in sorted(weeks_by_activity):
+        weeks = weeks_by_activity[activity_id]
+        if not weeks:
+            continue
+        activity = compiled.activities[activity_id]
+        actual_first_week = weeks[0]
+        planned_earliest_week = max(1, activity.planned_start_week)
+        predecessor_id = activity.predecessor_activity_id
+        if predecessor_id is not None:
+            predecessor_weeks = weeks_by_activity.get(predecessor_id, [])
+            if predecessor_weeks:
+                planned_earliest_week = max(
+                    planned_earliest_week, predecessor_weeks[-1] + 1
+                )
+
+        rejected: dict[int, dict[str, dict[str, Any]]] = {}
+        earliest_possible_week = actual_first_week
+        for week in range(planned_earliest_week, actual_first_week):
+            blockers = _blockers(activity_id, week)
+            if not blockers:
+                earliest_possible_week = week
+                break
+            rejected[week] = blockers
+
+        displaced = earliest_possible_week == actual_first_week and bool(rejected)
+        binding_week = min(rejected) if displaced else None
+        binding_details = rejected.get(binding_week, {}) if binding_week else {}
+        # POSSESSION_MIX keeps its documented meaning: it is only earned by
+        # work that actually shares a co_share_group. A mix failure only shows up
+        # in the rejected-week details, never as a displacement reason code.
+        binding_constraints = (
+            sorted(
+                code
+                for code in binding_details
+                if code in _DISPLACEMENT_REASON_CODES
+            )
+            if displaced
+            else []
+        )
+        if displaced:
+            codes_per_activity[activity_id].update(binding_constraints)
+
+        entry: dict[str, Any] = {
+            "planned_earliest_week": planned_earliest_week,
+            "actual_first_week": actual_first_week,
+            "earliest_possible_week": earliest_possible_week,
+            "displaced": displaced,
+            "rejected_weeks": sorted(rejected) if displaced else [],
+            "binding_week": binding_week,
+            "binding_constraints": binding_constraints,
+            "binding_details": binding_details,
+        }
+        evidence[activity_id] = entry
+
+    return codes_per_activity, evidence
+
+
 def _binding_reasons(
     compiled: CompiledInstance,
     variables: SolverVariables,
     access_weeks: dict[str, list[tuple[int, int, bool]]],
     occupancy_rows: list[OccupancyPlacement],
     policy: ScenarioPolicy,
-) -> dict[str, list[str]]:
+    access_rows: list[AccessPlacement],
+) -> tuple[dict[str, list[str]], dict[str, dict[str, Any]]]:
     codes_per_activity: dict[str, set[str]] = defaultdict(set)
     horizon = compiled.instance.horizon_weeks
     group_members: dict[tuple[str, int, str], set[str]] = defaultdict(set)
-    groups_at_location_week: dict[tuple[str, int], set[str]] = defaultdict(set)
     occupancy_by_activity: dict[str, list[OccupancyPlacement]] = defaultdict(list)
     for row in occupancy_rows:
         group_members[(row.location_id, row.week, row.co_share_group)].add(
             row.activity_id
         )
-        groups_at_location_week[(row.location_id, row.week)].add(row.co_share_group)
         occupancy_by_activity[row.activity_id].append(row)
 
-    contract_night_members: dict[tuple[str, int, int], set[str]] = defaultdict(set)
-    contract_week_nights: dict[tuple[str, int], set[int]] = defaultdict(set)
     weeks_by_activity: dict[str, set[int]] = {}
     for activity_id, accesses in access_weeks.items():
-        contract = compiled.activities[activity_id].contract_number
         weeks_by_activity[activity_id] = {week for week, _, _ in accesses}
-        for week, night, _ in accesses:
-            contract_night_members[(contract, week, night)].add(activity_id)
-            contract_week_nights[(contract, week)].add(night)
 
     # Physical possession evidence: closure, mirroring and interchange come
     # straight from the compiled closure graph, keyed by the shared close
@@ -538,6 +758,15 @@ def _binding_reasons(
             continue
         codes_per_activity[left_id].add(code)
         codes_per_activity[right_id].add(code)
+
+    # Capacity, weekly-cap and workfront codes are only earned by displaced work:
+    # they name the constraint that rejected an earlier week, never a limit the
+    # chosen placement merely touched.
+    displacement_codes, displacement_evidence = _displacement_analysis(
+        compiled, variables, access_rows, access_weeks
+    )
+    for activity_id, extra_codes in displacement_codes.items():
+        codes_per_activity[activity_id].update(extra_codes)
 
     for activity_id in variables.activity_order:
         accesses = access_weeks.get(activity_id, [])
@@ -559,36 +788,16 @@ def _binding_reasons(
         ):
             codes.add(reasons.ECLO_WINDOW)
         activity_occupancy = occupancy_by_activity.get(activity_id, [])
+        # Possession-mix and co-share packing only describe work that actually
+        # shares a co_share_group. An activity alone in its own group never
+        # claims either, even when other groups sit at the same location-week.
         if any(
             len(group_members[(row.location_id, row.week, row.co_share_group)]) > 1
             for row in activity_occupancy
         ):
             codes.add(reasons.CO_SHARE_PACKED)
             codes.add(reasons.POSSESSION_MIX)
-        if any(
-            len(groups_at_location_week[(row.location_id, row.week)]) > 1
-            for row in activity_occupancy
-        ):
-            codes.add(reasons.POSSESSION_MIX)
-        if any(
-            len(groups_at_location_week[(row.location_id, row.week)])
-            >= compiled.location_capacities[row.location_id]
-            for row in activity_occupancy
-        ):
-            codes.add(reasons.CAPACITY)
         contract = activity.contract_number
-        cap = compiled.contract_weekly_caps[contract]
-        if any(
-            len(contract_week_nights[(contract, week)]) >= cap
-            for week, _, _ in accesses
-        ):
-            codes.add(reasons.WEEKLY_CAP)
-        workfronts = compiled.contract_workfronts[contract]
-        if any(
-            len(contract_night_members[(contract, week, night)]) >= workfronts
-            for week, night, _ in accesses
-        ):
-            codes.add(reasons.WORKFRONT)
         last_week = accesses[-1][0]
         simulated_completion = week_end(compiled.instance.horizon_start, last_week)
         planned_completion = compiled.instance.contracts[
@@ -597,10 +806,13 @@ def _binding_reasons(
         if simulated_completion > planned_completion:
             codes.add(reasons.PRIORITY_OVERRUN)
 
-    return {
-        activity_id: sorted(codes)
-        for activity_id, codes in sorted(codes_per_activity.items())
-    }
+    return (
+        {
+            activity_id: sorted(codes)
+            for activity_id, codes in sorted(codes_per_activity.items())
+        },
+        displacement_evidence,
+    )
 
 
 def _infeasibility_reasons(

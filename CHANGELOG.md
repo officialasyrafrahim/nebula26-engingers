@@ -4,6 +4,16 @@ All notable changes to RAO are recorded here.
 
 ## [Unreleased]
 
+- Harden hidden-instance parsing against malformed CSV, bad encoding and unsafe values.
+- Enforce a single seven-night physical-slot universe across solver, fallback and witness.
+- Reject provable same-class closure, mirror and interchange conflicts in fallback validation.
+- Fail closed on malformed or contradictory official validator reports.
+- Keep adaptive horizon from reporting congestion as proven infeasibility.
+- Mark jobs failed on enqueue or persistence errors instead of stranding them.
+- Ground explanation reasons in persisted displacement evidence and real co-sharing.
+- Correct control-board buffer, selection, ECLO, assurance and stale-result behaviour.
+- Make the additive schema upgrade concurrency safe and document it.
+- Match mapped DTL/CCL topology to PS1 and broaden public-answer failure tests.
 - Block submission export when the persisted physical witness fails.
 - Upgrade existing `v0.3.0` database volumes with the physical-night column.
 - Add frontend assurance tests and show soft capacity excess details.

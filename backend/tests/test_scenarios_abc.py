@@ -9,8 +9,20 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.export import ACCESS_FILE, OCCUPANCY_FILE, RESULTS_FILE, load_bundle
+from app.modules.export import (
+    ACCESS_FILE,
+    OCCUPANCY_FILE,
+    RESULTS_FILE,
+    SubmissionParseError,
+    load_bundle,
+)
 from app.modules.solver import cp_sat_available, solve
+from app.modules.validator.report import (
+    HardViolation,
+    SoftScores,
+    ValidatorDetail,
+    ValidatorReport,
+)
 from tests.helpers_rail import load_public_compiled
 from tests.test_rail_solver import (
     HORIZON_START,
@@ -348,6 +360,123 @@ def test_generator_fails_when_a_scenario_cannot_solve(generator, tmp_path):
     outcome = report["outcomes"][0]
     assert outcome["solved"] is False
     assert outcome["errors"]
+
+
+def _rejection_report(
+    scenario: str,
+    *,
+    feasible: bool,
+    workload_complete: bool,
+    rules: tuple[str, ...],
+) -> ValidatorReport:
+    violations = tuple(
+        HardViolation(rule=rule, detail=f"injected {rule}") for rule in rules
+    )
+    return ValidatorReport(
+        scenario=scenario,
+        feasible=feasible,
+        workload_complete=workload_complete,
+        ready_for_submission=feasible and workload_complete,
+        authority="fallback",
+        validator_source="fallback",
+        hard_violations=violations,
+        soft_scores=SoftScores(scenario=scenario),
+        detail=ValidatorDetail(),
+    )
+
+
+def _run_generator_main(generator, monkeypatch, tmp_path) -> int:
+    """Run the CLI over a tiny compiled instance, bypassing disk parsing.
+
+    The real parser is irrelevant to these failure injections, so the instance
+    load and compile are stubbed to the tiny fixture. The adapter is disabled so
+    the fallback report is the only authority under test.
+    """
+
+    compiled = _tiny_generator_compiled()
+    monkeypatch.setattr(generator, "load_instance", lambda _instance: object())
+    monkeypatch.setattr(generator, "compile_instance", lambda _instance: compiled)
+    monkeypatch.setattr(generator, "validate_with_adapter", lambda *_a, **_k: None)
+    return generator.main(
+        [
+            "--instance",
+            str(tmp_path / "instance"),
+            "--outdir",
+            str(tmp_path / "out"),
+            "--scenarios",
+            "A",
+            "--time-limit",
+            "10",
+            "--quiet",
+        ]
+    )
+
+
+def _failure_outcome(tmp_path):
+    manifest_path = tmp_path / "out" / "generation_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    return manifest, manifest["outcomes"][0]
+
+
+def test_generator_records_schema_failure_and_exits_nonzero(
+    generator, monkeypatch, tmp_path
+):
+    def _raise_schema_error(*_args, **_kwargs):
+        raise SubmissionParseError([])
+
+    monkeypatch.setattr(generator, "load_bundle", _raise_schema_error)
+
+    exit_code = _run_generator_main(generator, monkeypatch, tmp_path)
+
+    manifest, outcome = _failure_outcome(tmp_path)
+    assert exit_code == generator.EXIT_FAILURE
+    assert manifest["ok"] is False
+    assert manifest["failures"] == ["A"]
+    assert outcome["solved"] is True
+    assert outcome["validation_ready"] is False
+    assert any("schema round-trip failed" in error for error in outcome["errors"])
+
+
+def test_generator_records_workload_failure_and_exits_nonzero(
+    generator, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        generator,
+        "_validate_bundle",
+        lambda *_args, **_kwargs: _rejection_report(
+            "A", feasible=True, workload_complete=False, rules=("workload",)
+        ),
+    )
+
+    exit_code = _run_generator_main(generator, monkeypatch, tmp_path)
+
+    manifest, outcome = _failure_outcome(tmp_path)
+    assert exit_code == generator.EXIT_FAILURE
+    assert manifest["ok"] is False
+    assert outcome["workload_complete"] is False
+    assert outcome["validation_ready"] is False
+    assert any("workload incomplete" in error for error in outcome["errors"])
+
+
+def test_generator_records_validator_rejection_and_exits_nonzero(
+    generator, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        generator,
+        "_validate_bundle",
+        lambda *_args, **_kwargs: _rejection_report(
+            "A", feasible=False, workload_complete=True, rules=("closure",)
+        ),
+    )
+
+    exit_code = _run_generator_main(generator, monkeypatch, tmp_path)
+
+    manifest, outcome = _failure_outcome(tmp_path)
+    assert exit_code == generator.EXIT_FAILURE
+    assert manifest["ok"] is False
+    assert outcome["feasible"] is False
+    assert outcome["validation_ready"] is False
+    assert any("validation failed" in error for error in outcome["errors"])
 
 
 def test_generator_refuses_to_skip_when_cp_sat_is_unavailable(generator, monkeypatch):

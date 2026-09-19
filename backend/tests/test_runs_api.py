@@ -366,6 +366,7 @@ def test_schedule_surfaces_passed_physical_witness_checks(
         "closure_simultaneity",
         "capacity_slots",
         "workfront_slots",
+        "physical_slot_universe",
         "witness_available",
     ]
     assert all(check["passed"] for check in checks.values())

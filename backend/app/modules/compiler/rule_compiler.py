@@ -16,6 +16,7 @@ from app.modules.compiler.closures import (
     LIVE_NATURE,
     buffered_closure,
     build_closure_conflicts,
+    ensure_locations_present,
     interchange_locations,
     interchange_triggered,
     mirrored_locations,
@@ -42,6 +43,16 @@ def compile_activity(
     interchange: tuple[str, ...] = ()
     if contract.nature_of_activity == LIVE_NATURE and interchange_triggered(route, closure):
         interchange = interchange_locations(instance, route.line_code)
+
+    ensure_locations_present(
+        instance, closure.location_ids, "buffer closure", activity.activity_id
+    )
+    ensure_locations_present(
+        instance, mirrored, "opposite-bound mirror", activity.activity_id
+    )
+    ensure_locations_present(
+        instance, interchange, "interchange closure", activity.activity_id
+    )
 
     closed_locations = tuple(
         dict.fromkeys(closure.location_ids + mirrored + interchange)

@@ -45,7 +45,10 @@ def parse_directory(directory: str | os.PathLike[str]) -> ParsedInstance:
         if not path.is_file():
             issues.append(Issue("missing required instance file", file=name))
             continue
-        sources[name] = path.read_text(encoding="utf-8-sig")
+        try:
+            sources[name] = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError as exc:
+            issues.append(Issue(f"invalid UTF-8 encoding: {exc.reason}", file=name))
     if issues:
         raise InstanceParseError(issues)
     return _parse_sources(sources)
@@ -68,7 +71,10 @@ def parse_mapping(mapping: Mapping[str, object]) -> ParsedInstance:
         if name in sources:
             issues.append(Issue("duplicate instance file", file=name))
             continue
-        sources[name] = _as_text(value, name)
+        try:
+            sources[name] = _as_text(value, name)
+        except InstanceParseError as exc:
+            issues.extend(exc.issues)
 
     for name in INSTANCE_FILES:
         if name not in sources:
@@ -80,20 +86,29 @@ def parse_mapping(mapping: Mapping[str, object]) -> ParsedInstance:
 
 def _as_text(value: object, name: str) -> str:
     if isinstance(value, bytes):
-        return value.decode("utf-8-sig")
+        return _decode(value, name)
     if isinstance(value, str):
         return value
     if isinstance(value, os.PathLike):
-        return Path(value).read_text(encoding="utf-8-sig")
+        return _decode(Path(value).read_bytes(), name)
     read = getattr(value, "read", None)
     if callable(read):
         data = read()
         if isinstance(data, bytes):
-            return data.decode("utf-8-sig")
+            return _decode(data, name)
         return str(data)
     raise InstanceParseError(
         [Issue(f"unsupported source type {type(value).__name__}", file=name)]
     )
+
+
+def _decode(data: bytes, name: str) -> str:
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise InstanceParseError(
+            [Issue(f"invalid UTF-8 encoding: {exc.reason}", file=name)]
+        ) from None
 
 
 def _parse_sources(sources: Mapping[str, str]) -> ParsedInstance:
@@ -128,7 +143,7 @@ def _parse_sources(sources: Mapping[str, str]) -> ParsedInstance:
 
 
 def _reader(text: str) -> csv.reader:
-    return csv.reader(io.StringIO(text.lstrip("\ufeff")))
+    return csv.reader(io.StringIO(text.lstrip("\ufeff")), strict=True)
 
 
 def _header_issues(name: str, header: list[str], expected: tuple[str, ...]) -> list[Issue]:
@@ -166,6 +181,10 @@ def _parse_rows(
         header = next(reader)
     except StopIteration:
         raise InstanceParseError([Issue("file is empty", file=name)]) from None
+    except csv.Error as exc:
+        raise InstanceParseError(
+            [Issue(f"malformed CSV: {exc}", file=name, row=reader.line_num)]
+        ) from None
 
     header_issues = _header_issues(name, header, expected)
     if header_issues:
@@ -173,36 +192,39 @@ def _parse_rows(
 
     records: list[Any] = []
     issues: list[Issue] = []
-    for raw in reader:
-        if not raw or all(cell.strip() == "" for cell in raw):
-            continue
-        line_number = reader.line_num
-        if len(raw) != len(expected):
-            issues.append(
-                Issue(
-                    f"expected {len(expected)} columns but found {len(raw)}",
-                    file=name,
-                    row=line_number,
-                )
-            )
-            continue
-        data = _normalise(dict(zip(expected, raw, strict=True)))
-        try:
-            records.append(model.model_validate(data))
-        except ValidationError as exc:
-            for error in exc.errors():
-                location = error.get("loc") or ()
-                column = str(location[0]) if location else None
-                value = data.get(column) if column else None
+    try:
+        for raw in reader:
+            if not raw or all(cell.strip() == "" for cell in raw):
+                continue
+            line_number = reader.line_num
+            if len(raw) != len(expected):
                 issues.append(
                     Issue(
-                        error.get("msg", "invalid value"),
+                        f"expected {len(expected)} columns but found {len(raw)}",
                         file=name,
                         row=line_number,
-                        column=column,
-                        value=None if value is None else str(value),
                     )
                 )
+                continue
+            data = _normalise(dict(zip(expected, raw, strict=True)))
+            try:
+                records.append(model.model_validate(data))
+            except ValidationError as exc:
+                for error in exc.errors():
+                    location = error.get("loc") or ()
+                    column = str(location[0]) if location else None
+                    value = data.get(column) if column else None
+                    issues.append(
+                        Issue(
+                            error.get("msg", "invalid value"),
+                            file=name,
+                            row=line_number,
+                            column=column,
+                            value=None if value is None else str(value),
+                        )
+                    )
+    except csv.Error as exc:
+        issues.append(Issue(f"malformed CSV: {exc}", file=name, row=reader.line_num))
 
     if issues:
         raise InstanceParseError(issues)
@@ -226,6 +248,10 @@ def _parse_parameters(name: str, text: str) -> Parameters:
         header = next(reader)
     except StopIteration:
         raise InstanceParseError([Issue("file is empty", file=name)]) from None
+    except csv.Error as exc:
+        raise InstanceParseError(
+            [Issue(f"malformed CSV: {exc}", file=name, row=reader.line_num)]
+        ) from None
 
     header_issues = _header_issues(name, header, PARAMETER_HEADERS)
     if header_issues:
@@ -233,24 +259,29 @@ def _parse_parameters(name: str, text: str) -> Parameters:
 
     values: dict[str, str] = {}
     issues: list[Issue] = []
-    for raw in reader:
-        if not raw or all(cell.strip() == "" for cell in raw):
-            continue
-        line_number = reader.line_num
-        if len(raw) != len(PARAMETER_HEADERS):
-            issues.append(
-                Issue(
-                    f"expected {len(PARAMETER_HEADERS)} columns but found {len(raw)}",
-                    file=name,
-                    row=line_number,
+    try:
+        for raw in reader:
+            if not raw or all(cell.strip() == "" for cell in raw):
+                continue
+            line_number = reader.line_num
+            if len(raw) != len(PARAMETER_HEADERS):
+                issues.append(
+                    Issue(
+                        f"expected {len(PARAMETER_HEADERS)} columns but found {len(raw)}",
+                        file=name,
+                        row=line_number,
+                    )
                 )
-            )
-            continue
-        key, value = raw[0].strip(), raw[1].strip()
-        if key in values:
-            issues.append(Issue(f"duplicate parameter key {key!r}", file=name, row=line_number))
-            continue
-        values[key] = value
+                continue
+            key, value = raw[0].strip(), raw[1].strip()
+            if key in values:
+                issues.append(
+                    Issue(f"duplicate parameter key {key!r}", file=name, row=line_number)
+                )
+                continue
+            values[key] = value
+    except csv.Error as exc:
+        issues.append(Issue(f"malformed CSV: {exc}", file=name, row=reader.line_num))
 
     for required in PARAMETER_KEYS:
         if required not in values:

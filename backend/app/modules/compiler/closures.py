@@ -111,6 +111,28 @@ def mirrored_locations(location_ids: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(mirrored))
 
 
+def ensure_locations_present(
+    instance: PlanningInstance,
+    location_ids: tuple[str, ...],
+    label: str,
+    activity_id: str,
+) -> None:
+    """Reject a closure that needs locations absent from ``04_LOCATION_SUPPLY``.
+
+    Silently dropping a required closure location would weaken the safety
+    envelope, so the compiler fails instead.
+    """
+
+    missing = [
+        location_id for location_id in location_ids if location_id not in instance.locations
+    ]
+    if missing:
+        listed = ", ".join(repr(location_id) for location_id in missing)
+        raise ClosureError(
+            f"activity {activity_id!r} {label} requires missing location(s): {listed}"
+        )
+
+
 def interchange_triggered(
     route: Route,
     closure: ClosureResult,
@@ -183,7 +205,12 @@ def interchange_locations(
     instance: PlanningInstance,
     own_line: str,
 ) -> tuple[str, ...]:
-    """Add the other line's H01/H02 sector and platforms, both bounds (A-4)."""
+    """Add the other line's H01/H02 sector and platforms, both bounds (A-4).
+
+    Every required location is returned even when absent from the supply table;
+    :func:`ensure_locations_present` rejects the activity instead of silently
+    dropping a cross-line safety closure.
+    """
 
     others = sorted(line for line in instance.lines if line != own_line)
     if len(others) != 1:
@@ -209,4 +236,4 @@ def interchange_locations(
                     station_id=station_id,
                 )
             )
-    return tuple(location for location in locations if location in instance.locations)
+    return tuple(locations)

@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.rail.nights import MAX_PHYSICAL_NIGHT, MIN_PHYSICAL_NIGHT
+
 
 class AccessPlacement(BaseModel):
     """One access occurrence for one activity.
@@ -30,7 +32,9 @@ class AccessPlacement(BaseModel):
     week: int = Field(ge=1)
     eclo: bool
     access_night: int = Field(ge=1)
-    physical_night: int | None = Field(default=None, ge=1)
+    physical_night: int | None = Field(
+        default=None, ge=MIN_PHYSICAL_NIGHT, le=MAX_PHYSICAL_NIGHT
+    )
 
 
 class OccupancyPlacement(BaseModel):

@@ -88,6 +88,7 @@ def test_zero_extension_disables_adaptive_growth():
     result = solve(compiled, "A", time_limit_seconds=10, horizon_extension_weeks=0)
 
     assert result.feasible is False
+    assert result.status == "UNKNOWN"
     assert result.infeasibility_reasons
 
 

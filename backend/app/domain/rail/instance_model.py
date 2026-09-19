@@ -11,13 +11,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date
 from itertools import pairwise
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.rail.errors import Issue
-from app.domain.rail.keys import parse_location_id
+from app.domain.rail.keys import parse_location_id, parse_sector_id
 from app.domain.rail.network import BufferRule, Line, LocationSupply, Sector, Station, StationKey
 from app.domain.rail.routes import RouteError, RouteNetwork, expand_route
+from app.domain.rail.strict_types import StrictDate, StrictInt
 
 
 class Contract(BaseModel):
@@ -25,15 +27,15 @@ class Contract(BaseModel):
 
     contract_number: str
     contract_description: str
-    contract_award_date: date
+    contract_award_date: StrictDate
     activity_type: str
     nature_of_activity: str
-    contract_priority: int = Field(ge=1, le=3)
-    contract_completion_date: date
-    planned_completion_date: date
-    number_of_workfronts: int = Field(ge=1)
-    access_type: str
-    number_of_maximum_access_per_week: int = Field(ge=1)
+    contract_priority: StrictInt = Field(ge=1, le=3)
+    contract_completion_date: StrictDate
+    planned_completion_date: StrictDate
+    number_of_workfronts: StrictInt = Field(ge=1)
+    access_type: Literal["PM", "PC", "C"]
+    number_of_maximum_access_per_week: StrictInt = Field(ge=1)
 
 
 class Activity(BaseModel):
@@ -44,17 +46,17 @@ class Activity(BaseModel):
     activity_type: str
     start_location_id: str
     end_location_id: str
-    total_accesses: int = Field(ge=1)
-    planned_start_date: date
+    total_accesses: StrictInt = Field(ge=1)
+    planned_start_date: StrictDate
     predecessor_activity_id: str | None = None
-    activity_priority: int = Field(ge=1, le=3)
+    activity_priority: StrictInt = Field(ge=1, le=3)
 
 
 class Parameters(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    horizon_start: date
-    horizon_weeks: int = Field(ge=1)
+    horizon_start: StrictDate
+    horizon_weeks: StrictInt = Field(ge=1)
 
 
 class PlanningInstance(BaseModel):
@@ -122,33 +124,38 @@ def planned_start_week(horizon_start: date, start_date: date) -> int:
 
 
 def find_predecessor_cycles(predecessors: Mapping[str, str]) -> list[tuple[str, ...]]:
-    """Return every predecessor cycle, each as an ordered tuple of activity ids."""
+    """Return every predecessor cycle, each as an ordered tuple of activity ids.
+
+    The walk is iterative so a deep hidden-instance chain cannot exhaust the
+    Python call stack. Each node has at most one predecessor, so a path and an
+    index map are enough to spot the back edge that closes a cycle.
+    """
 
     cycles: list[tuple[str, ...]] = []
     seen_cycles: set[frozenset[str]] = set()
     state: dict[str, int] = {}
-    stack: list[str] = []
 
-    def walk(node: str) -> None:
-        state[node] = 1
-        stack.append(node)
-        predecessor = predecessors.get(node)
-        if predecessor is not None:
-            if state.get(predecessor, 0) == 0:
-                walk(predecessor)
-            elif state.get(predecessor) == 1:
-                index = stack.index(predecessor)
-                cycle = tuple(stack[index:])
-                key = frozenset(cycle)
-                if key not in seen_cycles:
-                    seen_cycles.add(key)
-                    cycles.append(cycle)
-        stack.pop()
-        state[node] = 2
+    for root in predecessors:
+        if state.get(root, 0) != 0:
+            continue
+        path: list[str] = []
+        path_index: dict[str, int] = {}
+        node: str | None = root
+        while node is not None and state.get(node, 0) == 0:
+            state[node] = 1
+            path_index[node] = len(path)
+            path.append(node)
+            node = predecessors.get(node)
 
-    for node in predecessors:
-        if state.get(node, 0) == 0:
-            walk(node)
+        if node is not None and state.get(node) == 1:
+            cycle = tuple(path[path_index[node] :])
+            key = frozenset(cycle)
+            if key not in seen_cycles:
+                seen_cycles.add(key)
+                cycles.append(cycle)
+
+        for visited in path:
+            state[visited] = 2
     return cycles
 
 
@@ -157,6 +164,7 @@ def validate_planning_instance(instance: PlanningInstance) -> list[Issue]:
 
     issues: list[Issue] = []
     _validate_references(instance, issues)
+    _validate_sectors(instance, issues)
     _validate_uniqueness(instance, issues)
     _validate_network_continuity(instance, issues)
     _validate_predecessors(instance, issues)
@@ -216,6 +224,14 @@ def _validate_references(instance: PlanningInstance, issues: list[Issue]) -> Non
         if key.line_code != location.line_code or key.bound != location.bound:
             issues.append(
                 Issue(f"location {location_id!r} key disagrees with declared line/bound")
+            )
+        expected_kind = "tunnel sector" if key.is_tunnel else "platform sector"
+        if location.location_kind != expected_kind:
+            issues.append(
+                Issue(
+                    f"location {location_id!r} location_kind {location.location_kind!r} "
+                    f"disagrees with id kind {key.kind!r}"
+                )
             )
         if key.is_tunnel and key.sector_id not in instance.sectors:
             issues.append(
@@ -277,6 +293,42 @@ def _validate_references(instance: PlanningInstance, issues: list[Issue]) -> Non
                     Issue(f"activity {activity_id!r} {role} references unknown location "
                           f"{location_id!r}")
                 )
+
+
+def _validate_sectors(instance: PlanningInstance, issues: list[Issue]) -> None:
+    """Check every sector id against its declared endpoints and station order."""
+
+    for sector_id, sector in instance.sectors.items():
+        try:
+            key = parse_sector_id(sector.sector_id)
+        except ValueError as exc:
+            issues.append(Issue(f"sector {sector_id!r} is malformed: {exc}"))
+            continue
+        if (
+            key.line_code != sector.line_code
+            or key.from_station_id != sector.from_station_id
+            or key.to_station_id != sector.to_station_id
+        ):
+            issues.append(
+                Issue(
+                    f"sector {sector_id!r} key disagrees with its declared line and "
+                    f"endpoints ({sector.from_station_id!r} -> {sector.to_station_id!r})"
+                )
+            )
+            continue
+
+        from_station = instance.stations.get((sector.line_code, sector.from_station_id))
+        to_station = instance.stations.get((sector.line_code, sector.to_station_id))
+        if from_station is None or to_station is None:
+            continue
+        if abs(from_station.seq - to_station.seq) != 1:
+            issues.append(
+                Issue(
+                    f"sector {sector_id!r} endpoints {sector.from_station_id!r} (seq "
+                    f"{from_station.seq}) and {sector.to_station_id!r} (seq "
+                    f"{to_station.seq}) are not adjacent stations on {sector.line_code!r}"
+                )
+            )
 
 
 def _validate_uniqueness(instance: PlanningInstance, issues: list[Issue]) -> None:

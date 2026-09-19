@@ -17,8 +17,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.modules.compiler.policy import SCENARIOS
 from app.modules.validator.fallback_validator import validate_directories
 from app.modules.validator.report import (
     FORMULA_VERSION,
@@ -129,42 +130,140 @@ def run_official_validator(
         raise OfficialValidatorError(
             f"validator {command!r} did not return JSON: {exc}"
         ) from exc
-    return report_from_official_payload(payload)
+    return report_from_official_payload(payload, requested_scenario=scenario)
 
 
-def report_from_official_payload(payload: dict[str, Any]) -> ValidatorReport:
-    """Normalise an official PS1 section 2.7 payload into a report."""
+_TRUE_STRINGS = frozenset({"1", "true", "yes", "y", "on"})
+_FALSE_STRINGS = frozenset({"0", "false", "no", "n", "off"})
+
+
+def _as_bool(value: Any, *, default: bool) -> bool:
+    """Coerce a JSON value to bool, falling back to ``default`` when ambiguous."""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _TRUE_STRINGS:
+            return True
+        if lowered in _FALSE_STRINGS:
+            return False
+    return default
+
+
+def _parse_official_violations(payload: dict[str, Any]) -> tuple[HardViolation, ...]:
+    """Parse ``hard_violations``, rejecting any non-array or non-object item."""
+
+    raw = payload.get("hard_violations", ())
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise OfficialValidatorError("hard_violations must be a JSON array")
+    violations: list[HardViolation] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise OfficialValidatorError("each hard_violation must be a JSON object")
+        violations.append(
+            HardViolation(
+                rule=str(item.get("rule", "unknown")),
+                severity="hard",
+                detail=str(item.get("detail", "")),
+            )
+        )
+    return tuple(violations)
+
+
+def report_from_official_payload(
+    payload: Any, *, requested_scenario: str | None = None
+) -> ValidatorReport:
+    """Normalise an official PS1 section 2.7 payload into a trusted report.
+
+    The official program is an external process, so its report is treated as
+    untrusted input. A malformed payload, an unknown or mismatched scenario, an
+    infeasible status, a workload violation or any hard violation can never
+    yield ``ready_for_submission``. Readiness is always the conjunction of the
+    parsed facts rather than a flag the payload can assert on its own.
+    """
+
+    if not isinstance(payload, dict):
+        raise OfficialValidatorError("official validator payload is not a JSON object")
 
     scenario = str(payload.get("scenario", "A"))
-    violations = tuple(
-        HardViolation(
-            rule=str(item.get("rule", "unknown")),
-            severity="hard",
-            detail=str(item.get("detail", "")),
+    if scenario not in SCENARIOS:
+        raise OfficialValidatorError(
+            f"official validator reported unknown scenario {scenario!r}"
         )
-        for item in payload.get("hard_violations", ())
+    if requested_scenario is not None and scenario != requested_scenario:
+        raise OfficialValidatorError(
+            f"official validator reported scenario {scenario!r} but "
+            f"{requested_scenario!r} was requested"
+        )
+
+    violations = _parse_official_violations(payload)
+    status = str(payload.get("status", "")).strip().upper()
+    has_workload_violation = any(v.rule == "workload" for v in violations)
+    has_hard_violation = bool(violations)
+
+    feasible = (
+        _as_bool(payload.get("feasible"), default=not has_hard_violation)
+        and not has_hard_violation
+        and status != "INFEASIBLE"
     )
-    soft_payload = dict(payload.get("soft_scores") or {})
+    workload_complete = (
+        _as_bool(payload.get("workload_complete"), default=not has_workload_violation)
+        and not has_workload_violation
+    )
+    ready_for_submission = (
+        _as_bool(
+            payload.get("ready_for_submission"),
+            default=feasible and workload_complete,
+        )
+        and feasible
+        and workload_complete
+    )
+
+    raw_soft = payload.get("soft_scores")
+    if raw_soft is None:
+        soft_payload: dict[str, Any] = {}
+    elif isinstance(raw_soft, dict):
+        soft_payload = dict(raw_soft)
+    else:
+        raise OfficialValidatorError("soft_scores must be a JSON object")
     soft_payload.setdefault("scenario", scenario)
     soft_payload.setdefault("formula_version", FORMULA_VERSION)
-    soft_scores = SoftScores.model_validate(soft_payload)
+    try:
+        soft_scores = SoftScores.model_validate(soft_payload)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise OfficialValidatorError(
+            f"invalid soft_scores in official report: {exc}"
+        ) from exc
 
-    detail_payload = dict(payload.get("detail") or {})
-    if "capacity_hotspots" in detail_payload:
-        detail_payload["capacity_hotspots"] = tuple(detail_payload["capacity_hotspots"])
-    detail = ValidatorDetail.model_validate(detail_payload)
+    raw_detail = payload.get("detail")
+    if raw_detail is None:
+        detail_payload: dict[str, Any] = {}
+    elif isinstance(raw_detail, dict):
+        detail_payload = dict(raw_detail)
+    else:
+        raise OfficialValidatorError("detail must be a JSON object")
+    try:
+        if "capacity_hotspots" in detail_payload:
+            hotspots = detail_payload["capacity_hotspots"] or ()
+            detail_payload["capacity_hotspots"] = tuple(hotspots)
+        detail = ValidatorDetail.model_validate(detail_payload)
+    except (ValidationError, TypeError, ValueError) as exc:
+        raise OfficialValidatorError(
+            f"invalid detail in official report: {exc}"
+        ) from exc
 
-    feasible = bool(payload.get("feasible", not violations))
-    workload_complete = bool(
-        payload.get("workload_complete", not any(v.rule == "workload" for v in violations))
-    )
     return ValidatorReport(
         scenario=scenario,
         feasible=feasible,
         workload_complete=workload_complete,
-        ready_for_submission=bool(
-            payload.get("ready_for_submission", feasible and workload_complete)
-        ),
+        ready_for_submission=ready_for_submission,
         authority="official",
         validator_source="official",
         hard_violations=violations,

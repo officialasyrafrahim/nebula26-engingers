@@ -13,9 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.domain.rail.compiled import CompiledInstance
+from app.domain.rail.nights import PHYSICAL_NIGHT_SLOTS, PHYSICAL_NIGHTS_PER_WEEK
 from app.modules.compiler.policy import ScenarioPolicy
-
-PHYSICAL_NIGHTS_PER_WEEK = 7
 
 
 @dataclass(slots=True)
@@ -70,23 +69,22 @@ def max_nights(compiled: CompiledInstance) -> int:
 
 
 def physical_night_count(compiled: CompiledInstance) -> int:
-    """Number of distinct physical nights the model may assign in a week.
+    """Number of distinct physical nights in a week (always seven).
 
-    A week has seven calendar nights. The domain is widened when a published
-    contract cap or location supply exceeds seven, so the local ``access_night``
-    range (``1..cap``) is always representable after ranking.
+    A week has exactly seven calendar nights, so the physical universe never
+    widens. A published contract cap or location supply above seven cannot add
+    an eighth night; the local ``access_night`` range stays ``1..cap`` and is
+    satisfied by ranking the physical nights the contract actually uses (at
+    most seven).
     """
 
-    total = PHYSICAL_NIGHTS_PER_WEEK
-    for cap in compiled.contract_weekly_caps.values():
-        total = max(total, cap)
-    for capacity in compiled.location_capacities.values():
-        total = max(total, capacity)
-    return max(1, total)
+    # The universe is global; ``compiled`` is kept in the signature so callers
+    # written against the widened-domain version keep working.
+    return PHYSICAL_NIGHTS_PER_WEEK
 
 
 def physical_nights(compiled: CompiledInstance) -> tuple[int, ...]:
-    return tuple(range(1, physical_night_count(compiled) + 1))
+    return PHYSICAL_NIGHT_SLOTS
 
 
 def occupied_location_ids(compiled: CompiledInstance) -> tuple[str, ...]:

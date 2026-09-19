@@ -7,15 +7,20 @@ exists instead of inventing one.
 
 Equivalence classes are the contract/type/week/local-night namespaces (one
 physical slot each). Distinct local nights in one contract/type/week must map to
-distinct slots; that is the only same/different structure proven by the output
-schema. A compiled closure conflict becomes a separation edge only when the two
-activities share an **occupied** route location that week, because only there
-can the submitted group structure prove they meet. The remaining class graph
-must be 7-colourable (a week has seven calendar nights). A closure pair is
-waived when it shares a submitted ``co_share_group`` at that common occupied
-location; type compatibility alone never waives a buffer or closure. Pairs whose
-only overlap is a buffer (no common occupied location) cannot be proven from the
-schema and are not separated.
+distinct slots. Two activities in the **same** class are forced onto one
+physical slot. When their access types cannot co-share, a compiled closure,
+mirror or interchange conflict between them is provable and rejected even when
+their occupied routes do not intersect (only their buffers do). When their types
+are co-share compatible but their routes are disjoint, local-night identity
+alone does not prove they meet, so the buffer-only overlap stays provisional.
+Two activities in **different** classes are only known to be simultaneous when
+they share an occupied route location that week, where the submitted group
+structure can prove they meet; then their slots must differ. A cross-class pair
+whose only overlap is a buffer carries no proof either way and stays
+provisional. The remaining class graph must be 7-colourable (a week has exactly
+seven calendar nights). A closure pair is waived when it shares a submitted
+``co_share_group`` at a common occupied location; type compatibility alone never
+waives a buffer or closure.
 
 Deliberate, sample-calibrated limitation (pending the official validator,
 F-VALIDATOR-004): location-scoped ``co_share_group`` labels are **not** composed
@@ -33,9 +38,9 @@ from __future__ import annotations
 import itertools
 from collections import defaultdict
 
+from app.domain.rail.nights import PHYSICAL_NIGHTS_PER_WEEK
+from app.modules.compiler.mixes import co_share_compatible
 from app.modules.validator.checks.context import ValidationContext
-
-PHYSICAL_NIGHTS_PER_WEEK = 7
 
 _RULE_SEVERITY = {
     "interchange": 5,
@@ -193,36 +198,48 @@ def _check_week(
         activity_id: frozenset(ctx.activity(activity_id).occupied_locations)
         for activity_id in activities
     }
-    conflict_edges: list[tuple[str, str, str]] = []
+    forced: list[tuple[str, str, str]] = []
+    separations: list[tuple[str, str, str]] = []
     for left in activities:
         for right, rule in conflicts_by_activity.get(left, ()):
             if right not in present or right <= left:
                 continue
-            if not (occupied[left] & occupied[right]):
-                # Buffer-only overlap: simultaneity is not provable from the
-                # published contract/type-local night schema.
-                continue
             if _shares_group_at_common_location(ctx, week, left, right, groups):
                 continue
-            conflict_edges.append((left, right, rule))
+            same_class = node_of[left] == node_of[right]
+            co_shareable = co_share_compatible(
+                ctx.activity(left).access_type, ctx.activity(right).access_type
+            )
+            if same_class and (not co_shareable or occupied[left] & occupied[right]):
+                # Same contract/type/week/local-night class: the pair is forced
+                # onto one physical slot. An incompatibly-typed pair is provably
+                # in conflict even when the occupied routes do not intersect, so
+                # buffer-only overlaps of closures, mirrors and interchanges are
+                # rejected. A co-share compatible pair with disjoint routes stays
+                # provisional because local-night identity alone does not prove
+                # that two compatible activities meet (the authoritative sample
+                # depends on this).
+                forced.append((left, right, rule))
+            elif not same_class and occupied[left] & occupied[right]:
+                # Different classes with a shared occupied route location: the
+                # pair can be simultaneous, so their slots must differ.
+                separations.append((left, right, rule))
+            # Otherwise the only overlap is a buffer across unrelated local-night
+            # namespaces, or across co-share compatible types with disjoint
+            # routes. The published schema cannot prove simultaneity, so the pair
+            # stays provisional and is not separated.
 
-    # A conflict inside one class is forced simultaneity: hard violation.
-    forced = [
-        (left, right, rule)
-        for left, right, rule in conflict_edges
-        if node_of[left] == node_of[right]
-    ]
     if forced:
         for left, right, rule in forced:
             ctx.add(
                 rule,
-                f"week {week}: {left} and {right} are forced onto the same physical "
-                f"slot but their {rule} spans conflict and they do not share a "
-                "possession",
+                f"week {week}: {left} and {right} are the same "
+                f"contract/type/week/local-night class but their {rule} spans "
+                "conflict and they do not share a possession",
             )
         return
 
-    for left, right, _rule in conflict_edges:
+    for left, right, _rule in separations:
         require_different(node_of[left], node_of[right])
 
     for component in _components(adjacency, len(keys)):
@@ -231,7 +248,7 @@ def _check_week(
         component_set = set(component)
         rules = [
             rule
-            for left, right, rule in conflict_edges
+            for left, right, rule in separations
             if node_of[left] in component_set
         ]
         rule = max(rules, key=lambda item: _RULE_SEVERITY[item]) if rules else "closure"
